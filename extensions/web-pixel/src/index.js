@@ -5,11 +5,10 @@ register(({ analytics, browser, config }) => {
   const accountID = config?.accountID || 'demo-account';
   console.log(`Web pixel initialized with account ID: ${accountID}`);
   
-  // Define endpoints for different fallback mechanisms
-  const API_ENDPOINT = 'https://nova-ebgc.onrender.com/api/pixel-events';
+  // Define endpoint for tracking
   const BEACON_ENDPOINT = 'https://nova-ebgc.onrender.com/api/pixel-beacon';
   
-  console.log(`Web pixel configured to send events to: ${API_ENDPOINT}`);
+  console.log(`Web pixel configured to send events to: ${BEACON_ENDPOINT}`);
 
   // Utility function to safely access nested properties
   const getNestedValue = (obj, path, defaultValue = null) => {
@@ -59,80 +58,47 @@ register(({ analytics, browser, config }) => {
         shopDomain = context.shop.domain;
       }
       
-      // Create payload for the API
-      const payload = {
-        accountID: accountID,
-        eventName: eventType,
-        data: event.data || {},
-        timestamp: new Date().toISOString(),
+      // Generate tracking parameters
+      const trackingParams = new URLSearchParams({
+        event: eventType,
         shop: shopDomain,
-        clientId: event.clientId || event.id || `anonymous-${Date.now()}`
-      };
-      
-      console.log(`Attempting to send ${eventType} event to ${API_ENDPOINT}`);
-      
-      // Try multiple approaches in sequence - optimized for Shopify sandbox environment
-      
-      // Approach 1: Use fetch with no-cors mode - this works in the Shopify sandbox
-      const sendWithFetch = () => {
-        return new Promise((resolve, reject) => {
-          try {
-            // Using fetch with no-cors mode to avoid CORS issues in the sandbox
-            fetch(`${BEACON_ENDPOINT}?event=${encodeURIComponent(eventType)}&shop=${encodeURIComponent(shopDomain)}&ts=${Date.now()}&acc=${encodeURIComponent(accountID)}`, {
-              method: 'GET',
-              mode: 'no-cors' // Critical: Use no-cors mode for sandbox environment
-            })
-            .then(() => {
-              console.log(`Successfully sent ${eventType} with query params`);
-              resolve(true);
-            })
-            .catch(error => {
-              console.error(`Fetch error for ${eventType}:`, error);
-              reject(error);
-            });
-          } catch (error) {
-            console.error(`Fetch setup error for ${eventType}:`, error);
-            reject(error);
-          }
-        });
-      };
-      
-      // Approach 2: XMLHttpRequest as fallback
-      const sendWithXhr = () => {
-        return new Promise((resolve, reject) => {
-          try {
-            const xhr = new XMLHttpRequest();
-            xhr.open('POST', API_ENDPOINT, true);
-            xhr.setRequestHeader('Content-Type', 'application/json');
-            
-            xhr.onload = function() {
-              if (this.status >= 200 && this.status < 300) {
-                console.log(`Successfully sent ${eventType} with XMLHttpRequest`);
-                resolve(true);
-              } else {
-                console.error(`Error sending ${eventType}. Status: ${this.status}`);
-                reject(new Error(`HTTP status ${this.status}`));
-              }
-            };
-            
-            xhr.onerror = function() {
-              console.error(`Network error while sending ${eventType}`);
-              reject(new Error('Network error'));
-            };
-            
-            xhr.send(JSON.stringify(payload));
-          } catch (error) {
-            console.error(`XHR error for ${eventType}:`, error);
-            reject(error);
-          }
-        });
-      };
-      
-      // Start with fetch with no-cors which works well in sandboxed environments,
-      // then try XMLHttpRequest as a fallback
-      sendWithFetch().catch(() => sendWithXhr()).catch(finalError => {
-        console.error(`All tracking methods failed for ${eventType}:`, finalError);
+        ts: Date.now().toString(),
+        acc: accountID,
+        id: event.id || event.clientId || `anon-${Date.now()}`
       });
+      
+      // Add additional data for specific events
+      if (eventType === 'product_viewed') {
+        const product = getNestedValue(event, 'data.productVariant.product');
+        if (product) {
+          trackingParams.append('product_id', product.id || '');
+          trackingParams.append('product_title', product.title || '');
+        }
+      } else if (eventType === 'checkout_completed') {
+        const order = getNestedValue(event, 'data.checkout.order');
+        if (order) {
+          trackingParams.append('order_id', order.id || '');
+          trackingParams.append('order_total', getNestedValue(event, 'data.checkout.totalPrice.amount') || '0');
+        }
+      }
+      
+      console.log(`Sending ${eventType} event to ${BEACON_ENDPOINT}`);
+      
+      // Use fetch with no-cors mode - this is proven to work in Shopify's sandbox
+      try {
+        fetch(`${BEACON_ENDPOINT}?${trackingParams.toString()}`, {
+          method: 'GET',
+          mode: 'no-cors' // Critical for Shopify's sandbox environment
+        })
+        .then(() => {
+          console.log(`Successfully sent ${eventType} event`);
+        })
+        .catch(error => {
+          console.error(`Error sending ${eventType} event:`, error);
+        });
+      } catch (error) {
+        console.error(`Failed to set up fetch for ${eventType} event:`, error);
+      }
     });
   });
 });
