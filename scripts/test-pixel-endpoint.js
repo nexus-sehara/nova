@@ -10,19 +10,25 @@ const testPixelBeacon = async () => {
     id: `test-${Date.now()}`
   });
   
-  const url = `https://nova-ebgc.onrender.com/api/pixel-beacon?${testParams}`;
+  // Try both URLs - with hyphen and with underscore
+  const urls = [
+    `https://nova-ebgc.onrender.com/api/pixel-beacon?${testParams}`,
+    `https://nova-ebgc.onrender.com/api/pixel_beacon?${testParams}`
+  ];
   
-  console.log(`Testing pixel beacon endpoint: ${url}`);
-  
-  try {
-    const response = await fetch(url);
-    if (response.ok) {
-      console.log('✅ Beacon endpoint test successful!');
-    } else {
-      console.error(`❌ Beacon endpoint test failed: ${response.status} ${response.statusText}`);
+  for (const url of urls) {
+    console.log(`Testing pixel beacon endpoint: ${url}`);
+    
+    try {
+      const response = await fetch(url);
+      if (response.ok) {
+        console.log(`✅ Beacon endpoint test successful for ${url}!`);
+      } else {
+        console.error(`❌ Beacon endpoint test failed for ${url}: ${response.status} ${response.statusText}`);
+      }
+    } catch (error) {
+      console.error(`❌ Error testing beacon endpoint ${url}:`, error);
     }
-  } catch (error) {
-    console.error('❌ Error testing beacon endpoint:', error);
   }
 };
 
@@ -48,7 +54,12 @@ const testPixelEvents = async () => {
       body: JSON.stringify(testEvent)
     });
     
-    const data = await response.json();
+    let data;
+    try {
+      data = await response.json();
+    } catch (e) {
+      data = await response.text();
+    }
     
     if (response.ok) {
       console.log('✅ Pixel events endpoint test successful!', data);

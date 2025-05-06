@@ -7,23 +7,23 @@ application_url = "https://nova-ebgc.onrender.com"
 embedded = true
 
 [build]
-include_config_on_deploy = true
 automatically_update_urls_on_dev = false
+include_config_on_deploy = true
 
 [webhooks]
 api_version = "2025-04"
 
   [[webhooks.subscriptions]]
-  topics = [ "app/uninstalled" ]
-  uri = "/webhooks/app/uninstalled"
-
-  [[webhooks.subscriptions]]
   topics = [ "app/scopes_update" ]
   uri = "/webhooks/app/scopes_update"
 
+  [[webhooks.subscriptions]]
+  topics = [ "app/uninstalled" ]
+  uri = "/webhooks/app/uninstalled"
+
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "write_customers,write_orders,write_products,read_customers,read_orders,read_products,write_script_tags,write_pixels,read_customer_events,read_pixels"
+scopes = "read_customer_events,read_customers,read_orders,read_pixels,read_products,write_customers,write_orders,write_pixels,write_products,write_script_tags"
 
 [auth]
 redirect_urls = [
