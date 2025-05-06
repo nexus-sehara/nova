@@ -16,7 +16,11 @@
     "shopify": "shopify",
     "prisma": "prisma",
     "graphql-codegen": "graphql-codegen",
-    "vite": "vite"
+    "vite": "vite",
+    "db:migrate": "node scripts/migrate-database.js deploy",
+    "db:studio": "node scripts/migrate-database.js studio",
+    "db:create-migration": "node scripts/migrate-database.js create",
+    "db:reset": "node scripts/migrate-database.js reset"
   },
   "type": "module",
   "engines": {

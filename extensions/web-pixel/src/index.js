@@ -1,15 +1,15 @@
 import {register} from "@shopify/web-pixels-extension";
 
 register(({ analytics, browser, init, settings }) => {
-    // Log the browser object to inspect its properties
-    console.log("Inspecting browser object:", browser);
-    if (browser) {
-      console.log("browser.fetch type:", typeof browser.fetch);
-    }
-
     // Initialize with your account ID from settings
     const accountID = settings.accountID || 'demo-account';
     console.log(`Web pixel initialized with account ID: ${accountID}`);
+    
+    // Configure API endpoint - using a variable allows easier changes later
+    const API_BASE_URL = settings.apiBaseUrl || 'https://nova-ebgc.onrender.com';
+    const API_ENDPOINT = `${API_BASE_URL}/api/pixel-events`;
+    
+    console.log(`Web pixel configured to send events to: ${API_ENDPOINT}`);
 
     // ===== CUSTOMER EVENTS =====
     
@@ -38,7 +38,7 @@ register(({ analytics, browser, init, settings }) => {
       console.log('Product viewed', event);
       // Access product details
       const product = event.data.productVariant;
-      console.log(`Product: ${product.title}, Price: ${product.price.amount}`);
+      console.log(`Product: ${product?.title || 'unknown'}, Price: ${product?.price?.amount || 'unknown'}`);
       sendToAnalytics('product_viewed', event);
     });
     
@@ -55,7 +55,9 @@ register(({ analytics, browser, init, settings }) => {
       console.log('Product added to cart', event);
       // Access cart details
       const cartLine = event.data.cartLine;
-      console.log(`Added ${cartLine.quantity} of ${cartLine.merchandise.product.title}`);
+      if (cartLine) {
+        console.log(`Added ${cartLine.quantity} of ${cartLine.merchandise?.product?.title || 'unknown product'}`);
+      }
       sendToAnalytics('product_added_to_cart', event);
     });
     
@@ -78,7 +80,9 @@ register(({ analytics, browser, init, settings }) => {
       console.log('Checkout completed', event);
       // Access order details
       const checkout = event.data.checkout;
-      console.log(`Order ID: ${checkout.order.id}, Total: ${checkout.totalPrice.amount}`);
+      if (checkout?.order) {
+        console.log(`Order ID: ${checkout.order.id || 'unknown'}, Total: ${checkout.totalPrice?.amount || 'unknown'}`);
+      }
       sendToAnalytics('checkout_completed', event);
     });
 
@@ -87,7 +91,9 @@ register(({ analytics, browser, init, settings }) => {
     // Triggered when a search is performed
     analytics.subscribe('search_submitted', (event) => {
       console.log('Search submitted', event);
-      console.log(`Search query: ${event.data.searchResult.query}`);
+      if (event.data.searchResult) {
+        console.log(`Search query: ${event.data.searchResult.query || 'unknown'}`);
+      }
       sendToAnalytics('search_submitted', event);
     });
 
@@ -96,7 +102,7 @@ function sendToAnalytics(eventName, eventData) {
   try {
     // Get shop domain from the event context if available
     let shopDomain = 'mysmartap.myshopify.com'; // Default fallback
-
+    
     // Try to get shop from different possible locations in the event data
     if (eventData.context && eventData.context.document && eventData.context.document.location) {
       shopDomain = eventData.context.document.location.host;
@@ -108,6 +114,7 @@ function sendToAnalytics(eventName, eventData) {
     const payload = {
       accountID: accountID, // accountID is defined in the outer scope
       eventName: eventName,
+      name: eventName, // Include name for backward compatibility
       data: eventData, // This includes the full event object from Shopify
       timestamp: new Date().toISOString(),
       shop: shopDomain,
@@ -115,39 +122,58 @@ function sendToAnalytics(eventName, eventData) {
       clientId: eventData.clientId 
     };
 
-    console.log(`Sending ${eventName} event via BROWSER fetch to API for shop ${shopDomain}`);
+    console.log(`Sending ${eventName} event to API for shop ${shopDomain}`);
     
-    const apiUrl = '//nova-ebgc.onrender.com/api/pixel-events'; // <-- UPDATED URL
-
+    // Check if browser.fetch is available
     if (!browser || typeof browser.fetch !== 'function') {
-      console.error('browser.fetch is not available or not a function. Cannot send analytics event. Type:', typeof browser.fetch);
-      return; // Exit if browser.fetch is not usable
+      console.error('Browser fetch API not available. Cannot send analytics event.');
+      return;
     }
 
-    browser.fetch(apiUrl, { // <-- USE browser.fetch AND UPDATED URL
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    })
-    .then(response => {
-      if (!response.ok) {
-        return response.text().then(text => {
-          throw new Error(`HTTP error! Status: ${response.status} ${response.statusText}. Response body: ${text}`);
-        });
-      }
-      return response.json(); 
-    })
-    .then(data => {
-      console.log(`Successfully sent ${eventName} to API:`, data);
-    })
-    .catch(error => {
-      console.error(`Error sending ${eventName} event to API using browser.fetch:`, error);
-    });
+    // Retry logic for resiliency
+    let retries = 0;
+    const maxRetries = 3;
+    
+    const sendWithRetry = () => {
+      browser.fetch(API_ENDPOINT, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+      .then(response => {
+        if (!response.ok) {
+          return response.text().then(text => {
+            throw new Error(`HTTP error! Status: ${response.status}. Response: ${text}`);
+          });
+        }
+        return response.json(); 
+      })
+      .then(data => {
+        console.log(`Successfully sent ${eventName} to API:`, data);
+      })
+      .catch(error => {
+        console.error(`Error sending ${eventName} event to API:`, error);
+        
+        // Implement retry logic
+        if (retries < maxRetries) {
+          retries++;
+          const delay = Math.pow(2, retries) * 100; // Exponential backoff
+          console.log(`Retrying in ${delay}ms... (Attempt ${retries} of ${maxRetries})`);
+          
+          setTimeout(sendWithRetry, delay);
+        } else {
+          console.error(`Failed to send ${eventName} after ${maxRetries} attempts.`);
+        }
+      });
+    };
+    
+    // Start the send process
+    sendWithRetry();
 
   } catch (error) {
-    console.error(`Error in sendToAnalytics (before fetch) for ${eventName}:`, error);
+    console.error(`Error in sendToAnalytics for ${eventName}:`, error);
   }
 }
 });

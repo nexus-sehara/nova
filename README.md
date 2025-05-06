@@ -108,7 +108,7 @@ The database is defined as a Prisma schema in `prisma/schema.prisma`.
 This use of SQLite works in production if your app runs as a single instance.
 The database that works best for you depends on the data your app needs and how it is queried.
 You can run your database of choice on a server yourself or host it with a SaaS company.
-Here’s a short list of databases providers that provide a free tier to get started:
+Here's a short list of databases providers that provide a free tier to get started:
 
 | Database   | Type             | Hosters                                                                                                                                                                                                                               |
 | ---------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -156,7 +156,7 @@ Using the Vercel Preset is recommended when hosting your Shopify Remix app on Ve
 import { vitePlugin as remix } from "@remix-run/dev";
 import { defineConfig, type UserConfig } from "vite";
 import tsconfigPaths from "vite-tsconfig-paths";
-+ import { vercelPreset } from '@vercel/remix/vite';
+import { vercelPreset } from '@vercel/remix/vite';
 
 installGlobals();
 
@@ -164,12 +164,55 @@ export default defineConfig({
   plugins: [
     remix({
       ignoredRouteFiles: ["**/.*"],
-+     presets: [vercelPreset()],
+      presets: [vercelPreset()],
     }),
     tsconfigPaths(),
   ],
 });
 ```
+
+## Deployment on Render
+
+This application is deployed on Render at [https://nova-ebgc.onrender.com](https://nova-ebgc.onrender.com).
+
+### Environment Variables
+
+The following environment variables need to be set in your Render dashboard:
+
+#### Required Environment Variables
+- `DATABASE_URL`: PostgreSQL connection string for the database (provided by Render if using their PostgreSQL service)
+- `SHOPIFY_API_KEY`: Your Shopify API key (from the Shopify Partner Dashboard)
+- `SHOPIFY_API_SECRET`: Your Shopify API secret (from the Shopify Partner Dashboard)
+- `SHOPIFY_APP_URL`: The URL of your app (e.g., https://nova-ebgc.onrender.com)
+- `SHOPIFY_PIXEL_ACCOUNT_ID`: An identifier for your pixel account (e.g., "nova-pixel")
+- `ENCRYPTION_KEY`: A random string for encrypting session data (generate with `openssl rand -hex 32`)
+
+### Database Migration
+
+When deploying to Render, you need to run database migrations to set up the tables. Add this to your build command in Render:
+
+```
+npm install && npx prisma generate && npx prisma migrate deploy && npm run build
+```
+
+### Automatic Web Pixel Installation
+
+The app includes an API endpoint at `/api/activate-webpixel` to automatically install the web pixel for the store. Access this endpoint after the app is installed to activate the pixel.
+
+### Web Pixel Debugging
+
+To debug the web pixel:
+
+1. Access your Shopify store
+2. Open the browser developer console
+3. Look for logs starting with "Web pixel initialized..." to confirm the pixel is loaded
+4. Events will be logged to the console when they occur
+5. Check for any errors in the logs
+
+If events are not being recorded in the database:
+- Verify the correct API endpoint URLs are configured
+- Check CORS settings in the pixel events API
+- Examine network requests in the browser developer tools to identify any issues
 
 ## Troubleshooting
 

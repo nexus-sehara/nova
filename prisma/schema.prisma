@@ -5,8 +5,8 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
-  url      = "file:dev.sqlite"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 // Main table to store all raw Shopify events
@@ -23,6 +23,20 @@ model ShopifyEvent {
   @@index([shopDomain, eventName])
   @@index([timestamp])
   @@index([sessionId])
+}
+
+// New model for storing pixel events specifically
+model PixelEvent {
+  id          Int      @id @default(autoincrement())
+  shop        String
+  eventName   String
+  eventData   String   // JSON stored as string
+  accountId   String
+  timestamp   DateTime
+  createdAt   DateTime @default(now())
+
+  @@index([shop, eventName])
+  @@index([timestamp])
 }
 
 // Enhanced ProductView model with more context
@@ -141,10 +155,10 @@ model ProductMetadata {
   productId   String   @unique
   shopDomain  String
   title       String
-  tags        String
+  tags        String[]
   type        String?
   vendor      String?
-  collections String
+  collections String[]
   price       Float
   popularity  Float    @default(0)  // Calculated score based on views and purchases
   updatedAt   DateTime @updatedAt
@@ -178,17 +192,17 @@ model ProductRecommendation {
 
 // User behavior profile for personalized recommendations
 model UserProfile {
-  id              Int       @id @default(autoincrement())
-  userId          String    @unique
-  shopDomain      String
-  preferredCategories String // Categories the user shows interest in
-  preferredBrands    String // Brands the user shows interest in
-  preferredPriceRange Json?    // Min and max price range
-  viewedProducts  String  // Recently viewed product IDs
-  purchasedProducts String // Previously purchased product IDs
-  lastActive      DateTime
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id                  Int       @id @default(autoincrement())
+  userId              String    @unique
+  shopDomain          String
+  preferredCategories String[]
+  preferredBrands     String[]
+  preferredPriceRange Json?
+  viewedProducts      String[]
+  purchasedProducts   String[]
+  lastActive          DateTime
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 
   @@index([shopDomain])
   @@index([userId])

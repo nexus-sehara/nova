@@ -25,7 +25,7 @@ export const action = async ({ request }) => {
     const finalEventName = eventName || event_type;
     
     try {
-      // Try to store the event in the database
+      // Try to store the event in the database using the PixelEvent model
       const event = await prisma.pixelEvent.create({
         data: {
           shop: shop,
@@ -38,12 +38,23 @@ export const action = async ({ request }) => {
 
       console.log(`Stored pixel event webhook: ${finalEventName} for shop ${shop}`);
 
+      // Also store in the ShopifyEvent table for consistency
+      await prisma.shopifyEvent.create({
+        data: {
+          eventName: finalEventName,
+          shopDomain: shop,
+          eventData: data || {},
+          timestamp: new Date(timestamp),
+          sessionId: eventData.clientId || `webhook-${Date.now()}`,
+        }
+      });
+
       return new Response(
         JSON.stringify({ success: true, eventId: event.id }),
         { headers: { "Content-Type": "application/json" } }
       );
     } catch (dbError) {
-      // If there's a database error (like table doesn't exist), log it but don't fail the request
+      // If there's a database error, log it but don't fail the request
       console.error("Database error storing pixel event webhook:", dbError);
       
       // Still return a success response to the client

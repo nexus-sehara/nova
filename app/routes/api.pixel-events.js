@@ -3,22 +3,33 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-// Define allowed origin for CORS
-const allowedOrigin = "https://mysmartap.myshopify.com";
+// Define allowed origin for CORS - make more flexible
+const allowedOrigins = [
+  "https://mysmartap.myshopify.com",
+  "https://nova-ebgc.onrender.com"
+];
 
 // Helper function to create CORS headers
-const getCorsHeaders = () => ({
-  "Access-Control-Allow-Origin": allowedOrigin,
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
-});
+const getCorsHeaders = (origin) => {
+  // Allow any of the defined origins
+  const allowOrigin = allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
+  
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+  };
+};
 
 export const action = async ({ request }) => {
+  // Get the origin from request headers
+  const origin = request.headers.get("Origin") || allowedOrigins[0];
+  
   // Handle OPTIONS preflight request for CORS
   if (request.method === "OPTIONS") {
     return new Response(null, {
       status: 204, // No Content
-      headers: getCorsHeaders(),
+      headers: getCorsHeaders(origin),
     });
   }
 
@@ -26,7 +37,7 @@ export const action = async ({ request }) => {
   if (request.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
-      headers: { ...getCorsHeaders(), "Content-Type": "application/json" },
+      headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" },
     });
   }
 
@@ -40,7 +51,7 @@ export const action = async ({ request }) => {
     if (!shop) {
       return new Response(
         JSON.stringify({ success: false, error: "Missing shop in request body" }),
-        { status: 400, headers: { ...getCorsHeaders(), "Content-Type": "application/json" } }
+        { status: 400, headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } }
       );
     }
 
@@ -48,7 +59,7 @@ export const action = async ({ request }) => {
     if (!eventData.eventName || !eventData.timestamp) {
       return new Response(
         JSON.stringify({ success: false, error: "Missing required fields in request body" }),
-        { status: 400, headers: { ...getCorsHeaders(), "Content-Type": "application/json" } }
+        { status: 400, headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } }
       );
     }
 
@@ -60,6 +71,7 @@ export const action = async ({ request }) => {
       accountID: eventData.accountID,
       // data: eventData.data // Optionally log the full data object if needed, can be large
     });
+
     try {
       // Extract sessionId and other relevant data from the event
       // Shopify Pixel standard payload often uses `clientId` which can serve as our `sessionId`
@@ -80,14 +92,13 @@ export const action = async ({ request }) => {
       const userAgent = navigatorContext.userAgent || null;
       const referer = documentContext.referrer || null;
 
-      // 1. Upsert PixelSession
+      // 1. Upsert PixelSession - using the correct model name
       // Assumes PixelSession.sessionId is marked @unique in your schema.prisma
       const pixelSession = await prisma.pixelSession.upsert({
         where: { sessionId: sessionId }, 
         update: { 
           endedAt: eventTimestamp, 
-          userId: userId, // Update userId if it becomes available or changes
-          // other fields like userAgent, referer could be updated if they might change for an existing session
+          userId: userId,
         },
         create: {
           sessionId: sessionId,
@@ -103,11 +114,9 @@ export const action = async ({ request }) => {
       console.log(`Upserted PixelSession ID: ${pixelSession.id} for session ${sessionId} in shop ${shopDomain}`);
 
       // 2. Create ShopifyEvent
-      // Shopify standard pixel event name is in `eventData.name`
-      // The actual event-specific payload is in `eventData.data`
       const shopifyEvent = await prisma.shopifyEvent.create({
         data: {
-          eventName: eventData.name, 
+          eventName: eventData.eventName,
           shopDomain: shopDomain,
           eventData: eventData.data || {}, // Store the 'data' object from the pixel payload
           timestamp: eventTimestamp,
@@ -116,11 +125,26 @@ export const action = async ({ request }) => {
         },
       });
 
+      // 3. Also create a PixelEvent record for consistency with webhooks
+      const pixelEvent = await prisma.pixelEvent.create({
+        data: {
+          shop: shopDomain,
+          eventName: eventData.eventName,
+          eventData: JSON.stringify(eventData.data || {}),
+          accountId: eventData.accountID || "unknown",
+          timestamp: eventTimestamp,
+        },
+      });
+
       console.log(`Stored ShopifyEvent: ${shopifyEvent.eventName} for shop ${shopDomain}, Event ID: ${shopifyEvent.id}, Linked Session ID: ${sessionId}`);
+      console.log(`Also stored as PixelEvent ID: ${pixelEvent.id}`);
+
+      // 4. Process specific event types to update analytics models
+      await processEventForAnalytics(eventData, sessionId, shopDomain);
 
       return new Response(
         JSON.stringify({ success: true, eventId: shopifyEvent.id, pixelSessionId: pixelSession.id }),
-        { headers: { ...getCorsHeaders(), "Content-Type": "application/json" } }
+        { headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } }
       );
 
     } catch (dbError) {
@@ -133,7 +157,7 @@ export const action = async ({ request }) => {
           dbErrorMessage: dbError.message,
           details: dbError.stack // consider logging stack in dev, remove for prod
         }),
-        { status: 500, headers: { ...getCorsHeaders(), "Content-Type": "application/json" } } 
+        { status: 500, headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } } 
       );
     }
   } catch (error) {
@@ -142,27 +166,109 @@ export const action = async ({ request }) => {
     if (error instanceof SyntaxError && error.message.includes("JSON")) {
         return new Response(
             JSON.stringify({ success: false, error: "Invalid JSON payload" }),
-            { status: 400, headers: { ...getCorsHeaders(), "Content-Type": "application/json" } }
+            { status: 400, headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } }
         );
     }
     return new Response(
       JSON.stringify({ success: false, error: error.message }),
-      { status: 500, headers: { ...getCorsHeaders(), "Content-Type": "application/json" } }
+      { status: 500, headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } }
     );
   }
 };
 
+// New function to process events for analytics
+async function processEventForAnalytics(eventData, sessionId, shopDomain) {
+  const eventName = eventData.eventName;
+  const data = eventData.data || {};
+  
+  try {
+    switch(eventName) {
+      case 'product_viewed':
+        if (data.productVariant) {
+          // Create ProductView record
+          await prisma.productView.create({
+            data: {
+              productId: data.productVariant.product?.id || "unknown",
+              variantId: data.productVariant.id || "unknown",
+              productTitle: data.productVariant.product?.title || data.productVariant.title || "Unknown Product",
+              price: parseFloat(data.productVariant.price?.amount || 0),
+              shopDomain: shopDomain,
+              sessionId: sessionId,
+              userId: eventData.customer?.id || null,
+              viewedAt: new Date(eventData.timestamp),
+              // Add other fields as available from the event
+            }
+          });
+          console.log(`Created ProductView record for product ${data.productVariant.product?.title || "unknown"}`);
+        }
+        break;
+        
+      case 'product_added_to_cart':
+        if (data.cartLine) {
+          // Create CartEvent record
+          await prisma.cartEvent.create({
+            data: {
+              shopDomain: shopDomain,
+              productId: data.cartLine.merchandise.product?.id || "unknown",
+              variantId: data.cartLine.merchandise.id || "unknown",
+              quantity: data.cartLine.quantity || 1,
+              price: parseFloat(data.cartLine.merchandise.price?.amount || 0),
+              sessionId: sessionId,
+              userId: eventData.customer?.id || null,
+              eventType: "ADD_TO_CART",
+              timestamp: new Date(eventData.timestamp),
+            }
+          });
+          console.log(`Created CartEvent record for product ${data.cartLine.merchandise.product?.title || "unknown"}`);
+        }
+        break;
+        
+      case 'checkout_completed':
+        if (data.checkout && data.checkout.order) {
+          // Create Order record
+          const order = await prisma.order.create({
+            data: {
+              shopDomain: shopDomain,
+              orderId: data.checkout.order.id,
+              orderNumber: data.checkout.order.orderNumber,
+              totalPrice: parseFloat(data.checkout.totalPrice?.amount || 0),
+              userId: eventData.customer?.id || null,
+              sessionId: sessionId,
+              completedAt: new Date(eventData.timestamp),
+              // Create order items
+              orderItems: {
+                create: (data.checkout.lineItems || []).map(item => ({
+                  productId: item.variant?.product?.id || "unknown",
+                  variantId: item.variant?.id || "unknown",
+                  quantity: item.quantity || 1,
+                  price: parseFloat(item.variant?.price?.amount || 0),
+                }))
+              }
+            }
+          });
+          console.log(`Created Order record ID: ${order.id} for order ${data.checkout.order.orderNumber || "unknown"}`);
+        }
+        break;
+    }
+  } catch (error) {
+    console.error(`Error processing ${eventName} for analytics:`, error);
+    // Don't throw the error - we just log it and continue
+  }
+}
+
 // Handle GET requests (for testing the endpoint)
 export const loader = async ({ request }) => {
+  const origin = request.headers.get("Origin") || allowedOrigins[0];
+  
   // Handle OPTIONS preflight request for CORS for the loader as well, if it could be called cross-origin
   if (request.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
-      headers: getCorsHeaders(),
+      headers: getCorsHeaders(origin),
     });
   }
   return new Response(
     JSON.stringify({ message: "Pixel events API endpoint is active. Use POST to send events." }),
-    { headers: { ...getCorsHeaders(), "Content-Type": "application/json" } }
+    { headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } }
   );
 };
