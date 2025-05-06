@@ -1,7 +1,5 @@
 // import { authenticate } from "../shopify.server"; // This import is not used for the action, can be removed if not used elsewhere in this file or for other exports
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import prisma from "../db.server.js";
 
 // Define allowed origin for CORS - fully permissive for all domains
 const allowedOrigins = [
@@ -141,7 +139,7 @@ export const action = async ({ request }) => {
         data: {
           eventName: eventData.eventName, // Make sure eventName is included
           shopDomain: shopDomain,
-          eventData: eventData.data || {}, // Store the 'data' object from the pixel payload
+          eventData: typeof eventData.data === 'object' ? eventData.data : JSON.stringify(eventData.data || {}), // Handle object or string correctly
           timestamp: eventTimestamp,
           sessionId: sessionId, // Link to the PixelSession
           clientIp: clientIp, 
@@ -279,19 +277,92 @@ async function processEventForAnalytics(eventData, sessionId, shopDomain) {
   }
 }
 
-// Handle GET requests (for testing the endpoint)
+// Handle GET requests (for testing the endpoint and for basic pixel tracking)
 export const loader = async ({ request }) => {
   const origin = request.headers.get("Origin") || allowedOrigins[0];
   
-  // Handle OPTIONS preflight request for CORS for the loader as well, if it could be called cross-origin
+  // Handle OPTIONS preflight request for CORS for the loader as well
   if (request.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
       headers: getCorsHeaders(origin),
     });
   }
+
+  // Check if this is a pixel tracking GET request with event parameters
+  const url = new URL(request.url);
+  const hasEventParam = url.searchParams.has('event');
+  
+  if (hasEventParam) {
+    // Extract tracking parameters
+    const eventName = url.searchParams.get("event") || "unknown";
+    const shop = url.searchParams.get("shop") || "unknown";
+    const timestamp = url.searchParams.get("ts") ? new Date(parseInt(url.searchParams.get("ts"))) : new Date();
+    const accountID = url.searchParams.get("acc") || "unknown";
+    const sessionId = url.searchParams.get("id") || `anon-${Date.now()}`;
+    
+    // Log the event
+    console.log(`GET TRACKING: ${eventName} from ${shop}, session: ${sessionId}`);
+    
+    try {
+      // 1. Create or update session
+      const pixelSession = await prisma.pixelSession.upsert({
+        where: { sessionId },
+        update: { 
+          endedAt: timestamp,
+        },
+        create: {
+          sessionId,
+          shopDomain: shop,
+          startedAt: timestamp,
+          endedAt: timestamp,
+        },
+      });
+      
+      // 2. Create ShopifyEvent
+      const shopifyEvent = await prisma.shopifyEvent.create({
+        data: {
+          eventName,
+          shopDomain: shop,
+          eventData: JSON.stringify({ source: "api-endpoint-get" }),
+          timestamp,
+          sessionId,
+        },
+      });
+      
+      // 3. Create PixelEvent
+      const pixelEvent = await prisma.pixelEvent.create({
+        data: {
+          shop,
+          eventName,
+          eventData: JSON.stringify({ source: "api-endpoint-get" }),
+          accountId: accountID,
+          timestamp,
+        },
+      });
+      
+      console.log(`Saved events via GET: PixelEvent ID ${pixelEvent.id}, ShopifyEvent ID ${shopifyEvent.id}, Session ID ${pixelSession.id}`);
+    } catch (error) {
+      console.error("Error saving event via GET to database:", error);
+    }
+    
+    // Return a 1x1 transparent GIF
+    const transparentGif = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
+    
+    return new Response(transparentGif, {
+      status: 200,
+      headers: {
+        ...getCorsHeaders(origin),
+        "Content-Type": "image/gif",
+        "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+        "Pragma": "no-cache",
+      }
+    });
+  }
+  
+  // If not a tracking request, just return the standard API info response
   return new Response(
-    JSON.stringify({ message: "Pixel events API endpoint is active. Use POST to send events." }),
+    JSON.stringify({ message: "Pixel events API endpoint is active. Use POST to send events or include 'event' parameter for GET tracking." }),
     { headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } }
   );
 };

@@ -7,13 +7,11 @@ register(({ analytics, browser, config }) => {
   
   // Define multiple endpoints for tracking (for redundancy)
   const BEACON_ENDPOINTS = [
-    'https://nova-ebgc.onrender.com', // Try root path first
-    'https://nova-ebgc.onrender.com/p', // Try shortest route name
-    'https://nova-ebgc.onrender.com/pixel', // Try normal route
-    'https://nova-ebgc.onrender.com/pixel.gif' // Finally try static file
+    'https://nova-ebgc.onrender.com/api/pixel-events', // This endpoint exists and works
+    'https://nova-ebgc.onrender.com/api/pixel-events.pixel.gif', // Fallback to pixel.gif if needed
   ];
   
-  console.log(`Web pixel configured with multiple tracking endpoints for redundancy`);
+  console.log(`Web pixel configured with working tracking endpoints`);
 
   // Utility function to safely access nested properties
   const getNestedValue = (obj, path, defaultValue = null) => {
