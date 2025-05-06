@@ -5,10 +5,15 @@ register(({ analytics, browser, config }) => {
   const accountID = config?.accountID || 'demo-account';
   console.log(`Web pixel initialized with account ID: ${accountID}`);
   
-  // Define endpoint for tracking
-  const BEACON_ENDPOINT = 'https://nova-ebgc.onrender.com/pixel';
+  // Define multiple endpoints for tracking (for redundancy)
+  const BEACON_ENDPOINTS = [
+    'https://nova-ebgc.onrender.com', // Try root path first
+    'https://nova-ebgc.onrender.com/p', // Try shortest route name
+    'https://nova-ebgc.onrender.com/pixel', // Try normal route
+    'https://nova-ebgc.onrender.com/pixel.gif' // Finally try static file
+  ];
   
-  console.log(`Web pixel configured to send events to: ${BEACON_ENDPOINT}`);
+  console.log(`Web pixel configured with multiple tracking endpoints for redundancy`);
 
   // Utility function to safely access nested properties
   const getNestedValue = (obj, path, defaultValue = null) => {
@@ -29,6 +34,28 @@ register(({ analytics, browser, config }) => {
     'customer_account_created',
     'customer_logged_in'
   ];
+
+  // Modified version of the fetch call - try multiple endpoints sequentially
+  const trackEvent = async (eventType, trackingParams) => {
+    for (const endpoint of BEACON_ENDPOINTS) {
+      try {
+        console.log(`Trying to send ${eventType} to ${endpoint}`);
+        
+        const response = await fetch(`${endpoint}?${trackingParams.toString()}`, {
+          method: 'GET',
+          mode: 'no-cors' // Critical for Shopify's sandbox environment
+        });
+        
+        console.log(`Successfully sent ${eventType} event to ${endpoint}`);
+        return; // Stop trying if we get here
+      } catch (error) {
+        console.error(`Failed to send to ${endpoint}:`, error);
+        // Continue to next endpoint
+      }
+    }
+    
+    console.error(`All endpoints failed for ${eventType} event`);
+  };
 
   // Subscribe to all events
   eventTypes.forEach(eventType => {
@@ -82,23 +109,8 @@ register(({ analytics, browser, config }) => {
         }
       }
       
-      console.log(`Sending ${eventType} event to ${BEACON_ENDPOINT}`);
-      
-      // Use fetch with no-cors mode - this is proven to work in Shopify's sandbox
-      try {
-        fetch(`${BEACON_ENDPOINT}?${trackingParams.toString()}`, {
-          method: 'GET',
-          mode: 'no-cors' // Critical for Shopify's sandbox environment
-        })
-        .then(() => {
-          console.log(`Successfully sent ${eventType} event`);
-        })
-        .catch(error => {
-          console.error(`Error sending ${eventType} event:`, error);
-        });
-      } catch (error) {
-        console.error(`Failed to set up fetch for ${eventType} event:`, error);
-      }
+      // Use the new trackEvent function
+      trackEvent(eventType, trackingParams);
     });
   });
 });
