@@ -2,7 +2,7 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-// Define CORS headers for public endpoint
+// Define CORS headers for public endpoint - SIMPLIFIED VERSION
 const getCorsHeaders = (origin) => {
   return {
     "Access-Control-Allow-Origin": origin || "*",

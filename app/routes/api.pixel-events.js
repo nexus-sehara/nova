@@ -9,22 +9,11 @@ const allowedOrigins = [
   "*"  // Allow all domains
 ];
 
-// Helper function to create CORS headers
+// Helper function to create CORS headers - SIMPLIFIED VERSION
 const getCorsHeaders = (origin) => {
-  // If no origin provided or it's null, allow any origin
-  if (!origin) {
-    return {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
-      "Access-Control-Allow-Headers": "Content-Type, Origin, Accept",
-      "Access-Control-Max-Age": "86400", // 24 hours cache for preflight
-    };
-  }
-  
-  // For a public API endpoint that accepts requests from any domain,
-  // simply echo back the requesting origin
+  // For any public API endpoint, simply echo back the requesting origin
   return {
-    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Origin": origin || "*",
     "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
     "Access-Control-Allow-Headers": "Content-Type, Origin, Accept",
     "Access-Control-Max-Age": "86400", // 24 hours cache for preflight
