@@ -10,10 +10,11 @@ const testPixelBeacon = async () => {
     id: `test-${Date.now()}`
   });
   
-  // Try both URLs - with hyphen and with underscore
+  // Try all possible URLs to find which one works
   const urls = [
     `https://nova-ebgc.onrender.com/api/pixel-beacon?${testParams}`,
-    `https://nova-ebgc.onrender.com/api/pixel_beacon?${testParams}`
+    `https://nova-ebgc.onrender.com/api/pixel_beacon?${testParams}`,
+    `https://nova-ebgc.onrender.com/api/pixelbeacon?${testParams}`
   ];
   
   for (const url of urls) {

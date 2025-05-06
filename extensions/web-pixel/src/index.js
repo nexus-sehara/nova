@@ -6,7 +6,7 @@ register(({ analytics, browser, config }) => {
   console.log(`Web pixel initialized with account ID: ${accountID}`);
   
   // Define endpoint for tracking
-  const BEACON_ENDPOINT = 'https://nova-ebgc.onrender.com/api/pixel_beacon';
+  const BEACON_ENDPOINT = 'https://nova-ebgc.onrender.com/api/pixeltag';
   
   console.log(`Web pixel configured to send events to: ${BEACON_ENDPOINT}`);
 
