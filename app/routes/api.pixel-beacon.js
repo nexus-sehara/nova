@@ -2,22 +2,11 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-// Helper function to create CORS headers for Shopify Web Pixels (including null origins)
-const getCorsHeaders = (origin) => {
-  // Shopify's sandboxed environments often send requests with "null" origin
-  // We need to handle this specific case while still being secure
-  if (!origin || origin === "null") {
-    return {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Origin, Accept",
-      "Access-Control-Max-Age": "86400",
-    };
-  }
-  
-  // For non-null origins, reflect back the requesting origin
+// Define CORS headers for public endpoint - SIMPLIFIED VERSION
+const getCorsHeaders = () => {
+  // Always use wildcard for Shopify's web pixel sandboxed environment
   return {
-    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type, Origin, Accept",
     "Access-Control-Max-Age": "86400",
@@ -26,16 +15,14 @@ const getCorsHeaders = (origin) => {
 
 // Handle preflight OPTIONS requests
 export async function options({ request }) {
-  const origin = request.headers.get("Origin");
   return new Response(null, {
     status: 204,
-    headers: getCorsHeaders(origin),
+    headers: getCorsHeaders(),
   });
 }
 
 // Handle GET requests for pixel tracking with image
 export async function loader({ request }) {
-  const origin = request.headers.get("Origin") || "*";
   const url = new URL(request.url);
   
   // Extract params from query string
@@ -65,7 +52,7 @@ export async function loader({ request }) {
     return new Response(transparentGif, {
       status: 200,
       headers: {
-        ...getCorsHeaders(origin),
+        ...getCorsHeaders(),
         "Content-Type": "image/gif",
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
         "Pragma": "no-cache",
@@ -79,7 +66,7 @@ export async function loader({ request }) {
     return new Response(transparentGif, {
       status: 200,
       headers: {
-        ...getCorsHeaders(origin),
+        ...getCorsHeaders(),
         "Content-Type": "image/gif",
         "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
         "Pragma": "no-cache",
@@ -90,13 +77,11 @@ export async function loader({ request }) {
 
 // Handle POST requests for beacon API
 export async function action({ request }) {
-  const origin = request.headers.get("Origin") || "*";
-  
   // Handle OPTIONS preflight
   if (request.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
-      headers: getCorsHeaders(origin),
+      headers: getCorsHeaders(),
     });
   }
   
@@ -143,7 +128,7 @@ export async function action({ request }) {
     return new Response(JSON.stringify({ success: true }), {
       status: 200,
       headers: {
-        ...getCorsHeaders(origin),
+        ...getCorsHeaders(),
         "Content-Type": "application/json",
       }
     });
@@ -153,7 +138,7 @@ export async function action({ request }) {
     return new Response(JSON.stringify({ success: false, error: error.message }), {
       status: 500,
       headers: {
-        ...getCorsHeaders(origin),
+        ...getCorsHeaders(),
         "Content-Type": "application/json",
       }
     });

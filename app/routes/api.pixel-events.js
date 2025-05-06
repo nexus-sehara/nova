@@ -11,20 +11,10 @@ const allowedOrigins = [
 
 // Helper function to create CORS headers for Shopify Web Pixels (including null origins)
 const getCorsHeaders = (origin) => {
-  // Shopify's sandboxed environments often send requests with "null" origin
-  // We need to handle this specific case while still being secure
-  if (!origin || origin === "null") {
-    return {
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
-      "Access-Control-Allow-Headers": "Content-Type, Origin, Accept",
-      "Access-Control-Max-Age": "86400", // 24 hours cache for preflight
-    };
-  }
-  
-  // For non-null origins, reflect back the requesting origin
+  // Always set to "*" for Shopify web pixels regardless of origin
+  // This is the most reliable solution based on community feedback
   return {
-    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Origin": "*",
     "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
     "Access-Control-Allow-Headers": "Content-Type, Origin, Accept",
     "Access-Control-Max-Age": "86400", // 24 hours cache for preflight
@@ -33,23 +23,18 @@ const getCorsHeaders = (origin) => {
 
 // Dedicated endpoint for OPTIONS preflight requests
 export async function options({ request }) {
-  const origin = request.headers.get("Origin");
-  
   return new Response(null, {
     status: 204, // No Content
-    headers: getCorsHeaders(origin),
+    headers: getCorsHeaders(),
   });
 }
 
 export const action = async ({ request }) => {
-  // Get the origin from request headers
-  const origin = request.headers.get("Origin") || "*";
-  
   // Handle OPTIONS preflight request for CORS
   if (request.method === "OPTIONS") {
     return new Response(null, {
       status: 204, // No Content
-      headers: getCorsHeaders(origin),
+      headers: getCorsHeaders(),
     });
   }
 
@@ -57,7 +42,7 @@ export const action = async ({ request }) => {
   if (request.method !== "POST") {
     return new Response(JSON.stringify({ error: "Method not allowed" }), {
       status: 405,
-      headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" },
+      headers: { ...getCorsHeaders(), "Content-Type": "application/json" },
     });
   }
 
@@ -85,7 +70,7 @@ export const action = async ({ request }) => {
     if (!shop) {
       return new Response(
         JSON.stringify({ success: false, error: "Missing shop in request body" }),
-        { status: 400, headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } }
+        { status: 400, headers: { ...getCorsHeaders(), "Content-Type": "application/json" } }
       );
     }
 
@@ -93,7 +78,7 @@ export const action = async ({ request }) => {
     if (!eventData.eventName || !eventData.timestamp) {
       return new Response(
         JSON.stringify({ success: false, error: "Missing required fields in request body" }),
-        { status: 400, headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } }
+        { status: 400, headers: { ...getCorsHeaders(), "Content-Type": "application/json" } }
       );
     }
 
@@ -103,7 +88,6 @@ export const action = async ({ request }) => {
       eventName: eventData.eventName,
       timestamp: eventData.timestamp,
       accountID: eventData.accountID,
-      // data: eventData.data // Optionally log the full data object if needed, can be large
     });
 
     try {
@@ -178,7 +162,7 @@ export const action = async ({ request }) => {
 
       return new Response(
         JSON.stringify({ success: true, eventId: shopifyEvent.id, pixelSessionId: pixelSession.id }),
-        { headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } }
+        { headers: { ...getCorsHeaders(), "Content-Type": "application/json" } }
       );
 
     } catch (dbError) {
@@ -191,7 +175,7 @@ export const action = async ({ request }) => {
           dbErrorMessage: dbError.message,
           details: dbError.stack // consider logging stack in dev, remove for prod
         }),
-        { status: 500, headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } } 
+        { status: 500, headers: { ...getCorsHeaders(), "Content-Type": "application/json" } } 
       );
     }
   } catch (error) {
@@ -200,12 +184,12 @@ export const action = async ({ request }) => {
     if (error instanceof SyntaxError && error.message.includes("JSON")) {
         return new Response(
             JSON.stringify({ success: false, error: "Invalid JSON payload" }),
-            { status: 400, headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } }
+            { status: 400, headers: { ...getCorsHeaders(), "Content-Type": "application/json" } }
         );
     }
     return new Response(
       JSON.stringify({ success: false, error: error.message }),
-      { status: 500, headers: { ...getCorsHeaders(origin), "Content-Type": "application/json" } }
+      { status: 500, headers: { ...getCorsHeaders(), "Content-Type": "application/json" } }
     );
   }
 };
