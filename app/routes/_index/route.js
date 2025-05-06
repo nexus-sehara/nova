@@ -1,9 +1,7 @@
 import { redirect } from "@remix-run/node";
 import { useEffect } from "react";
 import { useNavigate } from "@remix-run/react";
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import prisma from "../../db.server.js";
 
 export function loader({ request }) {
   // Check if this is a tracking request
@@ -66,7 +64,7 @@ async function saveEventToDatabase(eventName, shop, timestamp, accountID, sessio
       data: {
         eventName,
         shopDomain: shop,
-        eventData: { source: "root-tracker" },
+        eventData: JSON.stringify({ source: "root-tracker" }),
         timestamp,
         sessionId,
       },

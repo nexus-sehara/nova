@@ -1,7 +1,5 @@
 // Simplified tracking endpoint with database support
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import prisma from "../db.server.js";
 
 export function loader({ request }) {
   const url = new URL(request.url);
@@ -56,7 +54,7 @@ async function saveEventToDatabase(eventName, shop, timestamp, accountID, sessio
       data: {
         eventName,
         shopDomain: shop,
-        eventData: { source: "p-route-tracker" },
+        eventData: JSON.stringify({ source: "p-route-tracker" }),
         timestamp,
         sessionId,
       },

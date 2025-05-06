@@ -1,4 +1,5 @@
 // Simple endpoint that just returns success and logs events
+import prisma from "../db.server.js";
 
 export async function loader({ request }) {
   // Extract query parameters
@@ -11,6 +12,11 @@ export async function loader({ request }) {
   
   // Log the event
   console.log(`SIMPLE TAG: Received event: ${eventName} from ${shop}, session: ${sessionId}, timestamp: ${timestamp}`);
+  
+  // Save to database (async but don't await to avoid blocking response)
+  saveEventToDatabase(eventName, shop, timestamp, accountID, sessionId).catch(error => {
+    console.error("Error saving event to database:", error);
+  });
   
   // Return a 1x1 transparent GIF
   const transparentGif = Buffer.from("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", "base64");
@@ -26,6 +32,54 @@ export async function loader({ request }) {
       "Pragma": "no-cache",
     }
   });
+}
+
+// Function to save event to database
+async function saveEventToDatabase(eventName, shop, timestamp, accountID, sessionId) {
+  try {
+    // 1. Create or update session
+    const pixelSession = await prisma.pixelSession.upsert({
+      where: { sessionId },
+      update: { 
+        endedAt: timestamp,
+      },
+      create: {
+        sessionId,
+        shopDomain: shop,
+        startedAt: timestamp,
+        endedAt: timestamp,
+      },
+    });
+    
+    // 2. Create ShopifyEvent
+    const shopifyEvent = await prisma.shopifyEvent.create({
+      data: {
+        eventName,
+        shopDomain: shop,
+        eventData: JSON.stringify({ source: "pixel-endpoint" }),
+        timestamp,
+        sessionId,
+      },
+    });
+    
+    // 3. Create PixelEvent
+    const pixelEvent = await prisma.pixelEvent.create({
+      data: {
+        shop,
+        eventName,
+        eventData: JSON.stringify({ source: "pixel-endpoint" }),
+        accountId: accountID,
+        timestamp,
+      },
+    });
+    
+    console.log(`Saved events to database: PixelEvent ID ${pixelEvent.id}, ShopifyEvent ID ${shopifyEvent.id}, Session ID ${pixelSession.id}`);
+    
+    return { pixelEvent, shopifyEvent, pixelSession };
+  } catch (error) {
+    console.error("Database error in pixel endpoint:", error);
+    throw error;
+  }
 }
 
 // Handle preflight OPTIONS requests

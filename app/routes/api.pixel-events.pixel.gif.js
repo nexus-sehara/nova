@@ -1,6 +1,4 @@
-import { PrismaClient } from "@prisma/client";
-
-const prisma = new PrismaClient();
+import prisma from "../db.server.js";
 
 // Transparent 1x1 GIF, base64-encoded
 const TRANSPARENT_GIF = 'R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==';
@@ -11,6 +9,8 @@ export const loader = async ({ request }) => {
   const event = url.searchParams.get('event');
   const shop = url.searchParams.get('shop');
   const timestamp = url.searchParams.get('ts') || Date.now();
+  const accountID = url.searchParams.get('acc') || "unknown";
+  const sessionId = url.searchParams.get('id') || `anon-${Date.now()}`;
   
   // Log the pixel request
   console.log(`Pixel tracking request received - Event: ${event}, Shop: ${shop}, Timestamp: ${timestamp}`);
@@ -18,18 +18,43 @@ export const loader = async ({ request }) => {
   try {
     // If we have event and shop data, try to store it
     if (event && shop) {
-      // Store in PixelEvent table
-      await prisma.pixelEvent.create({
+      // 1. Create or update session
+      const pixelSession = await prisma.pixelSession.upsert({
+        where: { sessionId },
+        update: { 
+          endedAt: new Date(Number(timestamp)),
+        },
+        create: {
+          sessionId,
+          shopDomain: shop,
+          startedAt: new Date(Number(timestamp)),
+          endedAt: new Date(Number(timestamp)),
+        },
+      });
+      
+      // 2. Create ShopifyEvent
+      const shopifyEvent = await prisma.shopifyEvent.create({
+        data: {
+          eventName: event,
+          shopDomain: shop,
+          eventData: JSON.stringify({ source: "pixel-gif" }),
+          timestamp: new Date(Number(timestamp)),
+          sessionId,
+        },
+      });
+      
+      // 3. Create PixelEvent
+      const pixelEvent = await prisma.pixelEvent.create({
         data: {
           shop: shop,
           eventName: event,
-          eventData: "{}",  // No data available in pixel tracking
-          accountId: "pixel-fallback",
+          eventData: JSON.stringify({ source: "pixel-gif" }),
+          accountId: accountID,
           timestamp: new Date(Number(timestamp)),
         }
       });
       
-      console.log(`Stored pixel tracking event: ${event} for shop ${shop}`);
+      console.log(`Stored pixel tracking event: ${event} for shop ${shop} - PixelEvent ID ${pixelEvent.id}, ShopifyEvent ID ${shopifyEvent.id}, Session ID ${pixelSession.id}`);
     }
   } catch (error) {
     // Just log the error but still return the GIF
@@ -43,7 +68,8 @@ export const loader = async ({ request }) => {
       'Content-Type': 'image/gif',
       'Cache-Control': 'no-cache, no-store, must-revalidate',
       'Pragma': 'no-cache',
-      'Expires': '0'
+      'Expires': '0',
+      'Access-Control-Allow-Origin': '*',
     }
   });
 }; 
