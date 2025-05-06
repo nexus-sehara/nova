@@ -124,17 +124,12 @@ function sendToAnalytics(eventName, eventData) {
 
     console.log(`Sending ${eventName} event to API for shop ${shopDomain}`);
     
-    // Check if browser.fetch is available
-    if (!browser || typeof browser.fetch !== 'function') {
-      console.error('Browser fetch API not available. Cannot send analytics event.');
-      return;
-    }
-
     // Retry logic for resiliency
     let retries = 0;
     const maxRetries = 3;
     
     const sendWithRetry = () => {
+      // Direct use of browser.fetch without type checking
       browser.fetch(API_ENDPOINT, {
         method: 'POST',
         headers: {

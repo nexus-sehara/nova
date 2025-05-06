@@ -6,13 +6,35 @@ const prisma = new PrismaClient();
 // Define allowed origin for CORS - make more flexible
 const allowedOrigins = [
   "https://mysmartap.myshopify.com",
-  "https://nova-ebgc.onrender.com"
+  "https://nova-ebgc.onrender.com",
+  // Add wildcard for Shopify domains
+  "*.myshopify.com"
 ];
 
 // Helper function to create CORS headers
 const getCorsHeaders = (origin) => {
-  // Allow any of the defined origins
-  const allowOrigin = allowedOrigins.includes(origin) ? origin : allowedOrigins[0];
+  // If no origin provided or it's null, allow any origin for development
+  if (!origin) {
+    return {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+    };
+  }
+  
+  // Check if origin matches any of our allowed origins
+  // For wildcard domains like *.myshopify.com, do a partial match
+  const isAllowed = allowedOrigins.some(allowed => {
+    if (allowed.startsWith('*.')) {
+      // Convert *.domain.com to .domain.com for matching
+      const suffix = allowed.substring(1);
+      return origin.endsWith(suffix);
+    }
+    return origin === allowed;
+  });
+  
+  // If the origin is allowed, echo it back, otherwise use the default
+  const allowOrigin = isAllowed ? origin : allowedOrigins[0];
   
   return {
     "Access-Control-Allow-Origin": allowOrigin,
