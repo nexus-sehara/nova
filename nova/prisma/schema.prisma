@@ -1,0 +1,195 @@
+// prisma/schema.prisma - Enhanced for product recommendations
+generator client {
+  provider = "prisma-client-js"
+  output   = "../node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:dev.sqlite"
+}
+
+// Main table to store all raw Shopify events
+model ShopifyEvent {
+  id         Int      @id @default(autoincrement())
+  eventName  String
+  shopDomain String
+  eventData  Json
+  timestamp  DateTime
+  sessionId  String?  // Track user sessions
+  clientIp   String?  // Anonymized client IP for session correlation
+  createdAt  DateTime @default(now())
+
+  @@index([shopDomain, eventName])
+  @@index([timestamp])
+  @@index([sessionId])
+}
+
+// Enhanced ProductView model with more context
+model ProductView {
+  id               Int       @id @default(autoincrement())
+  productId        String
+  variantId        String
+  productTitle     String
+  price            Float
+  shopDomain       String
+  sessionId        String? 
+  userId           String?   // Anonymous or authenticated user ID
+  referringProduct String?   // Which product they viewed before this one
+  referringCollection String? // Collection they came from, if any
+  viewDuration     Int?      // Time spent viewing in seconds
+  deviceType       String?   // mobile, desktop, tablet
+  viewedAt         DateTime
+  createdAt        DateTime  @default(now())
+
+  @@index([productId])
+  @@index([shopDomain, viewedAt])
+  @@index([userId])
+  @@index([sessionId])
+}
+
+model CartEvent {
+  id         Int      @id @default(autoincrement())
+  shopDomain String
+  productId  String
+  variantId  String
+  quantity   Int
+  price      Float
+  sessionId  String?
+  userId     String?
+  eventType  String   // ADD_TO_CART, REMOVE_FROM_CART, UPDATE_QUANTITY
+  timestamp  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([shopDomain, eventType])
+  @@index([productId])
+  @@index([sessionId])
+  @@index([userId])
+}
+
+model Order {
+  id            Int      @id @default(autoincrement())
+  shopDomain    String
+  orderId       String   @unique
+  orderNumber   String?
+  totalPrice    Float
+  userId        String?
+  sessionId     String?
+  completedAt   DateTime
+  createdAt     DateTime @default(now())
+  orderItems    OrderItem[]
+
+  @@index([shopDomain, completedAt])
+  @@index([userId])
+}
+
+model OrderItem {
+  id         Int      @id @default(autoincrement())
+  orderId    Int
+  productId  String
+  variantId  String
+  quantity   Int
+  price      Float
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+// Track user sessions
+// Shopify App Authentication Session Model
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String?
+  userId        BigInt?   // Corresponds to the User ID from Shopify Admin API
+
+  // Fields required by Shopify's PrismaSessionStorage
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+
+  @@index([shop])
+}
+
+model PixelSession {
+  id         Int       @id @default(autoincrement())
+  sessionId  String    @unique
+  shopDomain String
+  userId     String?   // Anonymous or authenticated user ID
+  startedAt  DateTime
+  endedAt    DateTime?
+  deviceType String?
+  userAgent  String?
+  referer    String?   // Where the user came from
+  createdAt  DateTime  @default(now())
+
+  @@index([shopDomain, startedAt])
+  @@index([userId])
+}
+
+// Enhanced product metadata to aid recommendations
+model ProductMetadata {
+  id          Int      @id @default(autoincrement())
+  productId   String   @unique
+  shopDomain  String
+  title       String
+  tags        String
+  type        String?
+  vendor      String?
+  collections String
+  price       Float
+  popularity  Float    @default(0)  // Calculated score based on views and purchases
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@index([shopDomain])
+  @@index([tags])
+  @@index([collections])
+  @@index([type])
+  @@index([vendor])
+  @@index([popularity(sort: Desc)])
+}
+
+// Product recommendations model
+model ProductRecommendation {
+  id                Int      @id @default(autoincrement())
+  shopDomain        String
+  sourceProductId   String   // The product being viewed
+  recommendedProductId String // The recommended product
+  score             Float    // Recommendation strength score
+  recommendationType String   // SIMILAR_PRODUCTS, FREQUENTLY_BOUGHT_TOGETHER, etc.
+  lastCalculated    DateTime
+  createdAt         DateTime @default(now())
+
+  @@unique([sourceProductId, recommendedProductId, recommendationType])
+  @@index([sourceProductId])
+  @@index([recommendedProductId])
+  @@index([shopDomain, recommendationType])
+  @@index([score(sort: Desc)])
+}
+
+// User behavior profile for personalized recommendations
+model UserProfile {
+  id              Int       @id @default(autoincrement())
+  userId          String    @unique
+  shopDomain      String
+  preferredCategories String // Categories the user shows interest in
+  preferredBrands    String // Brands the user shows interest in
+  preferredPriceRange Json?    // Min and max price range
+  viewedProducts  String  // Recently viewed product IDs
+  purchasedProducts String // Previously purchased product IDs
+  lastActive      DateTime
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([shopDomain])
+  @@index([userId])
+}

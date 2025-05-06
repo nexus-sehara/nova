@@ -1,0 +1,984 @@
+// prisma/schema.prisma - Enhanced for product recommendations
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql" // Change to your database provider if needed
+  url      = env("DATABASE_URL")
+}
+
+// Main table to store all raw Shopify events
+model ShopifyEvent {
+  id         Int      @id @default(autoincrement())
+  eventName  String
+  shopDomain String
+  eventData  Json
+  timestamp  DateTime
+  sessionId  String?  // Track user sessions
+  clientIp   String?  // Anonymized client IP for session correlation
+  createdAt  DateTime @default(now())
+
+  @@index([shopDomain, eventName])
+  @@index([timestamp])
+  @@index([sessionId])
+}
+
+// Enhanced ProductView model with more context
+model ProductView {
+  id               Int       @id @default(autoincrement())
+  productId        String
+  variantId        String
+  productTitle     String
+  price            Float
+  shopDomain       String
+  sessionId        String? 
+  userId           String?   // Anonymous or authenticated user ID
+  referringProduct String?   // Which product they viewed before this one
+  referringCollection String? // Collection they came from, if any
+  viewDuration     Int?      // Time spent viewing in seconds
+  deviceType       String?   // mobile, desktop, tablet
+  viewedAt         DateTime
+  createdAt        DateTime  @default(now())
+
+  @@index([productId])
+  @@index([shopDomain, viewedAt])
+  @@index([userId])
+  @@index([sessionId])
+}
+
+model CartEvent {
+  id         Int      @id @default(autoincrement())
+  shopDomain String
+  productId  String
+  variantId  String
+  quantity   Int
+  price      Float
+  sessionId  String?
+  userId     String?
+  eventType  String   // ADD_TO_CART, REMOVE_FROM_CART, UPDATE_QUANTITY
+  timestamp  DateTime
+  createdAt  DateTime @default(now())
+
+  @@index([shopDomain, eventType])
+  @@index([productId])
+  @@index([sessionId])
+  @@index([userId])
+}
+
+model Order {
+  id            Int      @id @default(autoincrement())
+  shopDomain    String
+  orderId       String   @unique
+  orderNumber   String?
+  totalPrice    Float
+  userId        String?
+  sessionId     String?
+  completedAt   DateTime
+  createdAt     DateTime @default(now())
+  orderItems    OrderItem[]
+
+  @@index([shopDomain, completedAt])
+  @@index([userId])
+}
+
+model OrderItem {
+  id         Int      @id @default(autoincrement())
+  orderId    Int
+  productId  String
+  variantId  String
+  quantity   Int
+  price      Float
+  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+}
+
+// Track user sessions
+model Session {
+  id         Int       @id @default(autoincrement())
+  sessionId  String    @unique
+  shopDomain String
+  userId     String?   // Anonymous or authenticated user ID
+  startedAt  DateTime
+  endedAt    DateTime?
+  deviceType String?
+  userAgent  String?
+  referer    String?   // Where the user came from
+  createdAt  DateTime  @default(now())
+
+  @@index([shopDomain, startedAt])
+  @@index([userId])
+}
+
+// Enhanced product metadata to aid recommendations
+model ProductMetadata {
+  id          Int      @id @default(autoincrement())
+  productId   String   @unique
+  shopDomain  String
+  title       String
+  tags        String[]
+  type        String?
+  vendor      String?
+  collections String[]
+  price       Float
+  popularity  Float    @default(0)  // Calculated score based on views and purchases
+  updatedAt   DateTime @updatedAt
+  createdAt   DateTime @default(now())
+
+  @@index([shopDomain])
+  @@index([tags])
+  @@index([collections])
+  @@index([type])
+  @@index([vendor])
+  @@index([popularity(sort: Desc)])
+}
+
+// Product recommendations model
+model ProductRecommendation {
+  id                Int      @id @default(autoincrement())
+  shopDomain        String
+  sourceProductId   String   // The product being viewed
+  recommendedProductId String // The recommended product
+  score             Float    // Recommendation strength score
+  recommendationType String   // SIMILAR_PRODUCTS, FREQUENTLY_BOUGHT_TOGETHER, etc.
+  lastCalculated    DateTime
+  createdAt         DateTime @default(now())
+
+  @@unique([sourceProductId, recommendedProductId, recommendationType])
+  @@index([sourceProductId])
+  @@index([recommendedProductId])
+  @@index([shopDomain, recommendationType])
+  @@index([score(sort: Desc)])
+}
+
+// User behavior profile for personalized recommendations
+model UserProfile {
+  id              Int       @id @default(autoincrement())
+  userId          String    @unique
+  shopDomain      String
+  preferredCategories String[] // Categories the user shows interest in
+  preferredBrands    String[] // Brands the user shows interest in
+  preferredPriceRange Json?    // Min and max price range
+  viewedProducts  String[]  // Recently viewed product IDs
+  purchasedProducts String[] // Previously purchased product IDs
+  lastActive      DateTime
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([shopDomain])
+  @@index([userId])
+}
+
+
+*************************************
+
+
+// app/services/recommendationEngine.server.js
+import { prisma } from "~/db.server";
+
+export class RecommendationEngine {
+  // Get recommendations for a product
+  static async getProductRecommendations({
+    productId,
+    shopDomain,
+    userId = null,
+    sessionId = null,
+    limit = 5,
+    recommendationType = "SIMILAR_PRODUCTS"
+  }) {
+    // First check if we have pre-calculated recommendations
+    const storedRecommendations = await prisma.productRecommendation.findMany({
+      where: {
+        sourceProductId: productId,
+        shopDomain,
+        recommendationType
+      },
+      orderBy: {
+        score: 'desc'
+      },
+      take: limit
+    });
+
+    // If we have recent recommendations, use them
+    if (storedRecommendations.length > 0) {
+      // Get the product details for these recommendations
+      const recommendedProducts = await prisma.productMetadata.findMany({
+        where: {
+          productId: {
+            in: storedRecommendations.map(rec => rec.recommendedProductId)
+          },
+          shopDomain
+        }
+      });
+
+      // Sort by the recommendation score
+      return recommendedProducts.sort((a, b) => {
+        const scoreA = storedRecommendations.find(rec => rec.recommendedProductId === a.productId)?.score || 0;
+        const scoreB = storedRecommendations.find(rec => rec.recommendedProductId === b.productId)?.score || 0;
+        return scoreB - scoreA;
+      });
+    }
+
+    // If personalized for a user, generate on-the-fly recommendations
+    if (userId) {
+      return this.generatePersonalizedRecommendations({
+        productId,
+        shopDomain,
+        userId,
+        limit
+      });
+    }
+
+    // For session-based temporary users
+    if (sessionId) {
+      return this.generateSessionBasedRecommendations({
+        productId,
+        shopDomain,
+        sessionId,
+        limit
+      });
+    }
+
+    // Fallback to popular products in same category
+    return this.getFallbackRecommendations({
+      productId,
+      shopDomain,
+      limit
+    });
+  }
+
+  // Generate user-specific recommendations based on their past behavior
+  static async generatePersonalizedRecommendations({
+    productId,
+    shopDomain,
+    userId,
+    limit
+  }) {
+    // Get the current product details to find similar ones
+    const currentProduct = await prisma.productMetadata.findFirst({
+      where: {
+        productId,
+        shopDomain
+      }
+    });
+
+    if (!currentProduct) {
+      return this.getFallbackRecommendations({ shopDomain, limit });
+    }
+
+    // Get user profile
+    const userProfile = await prisma.userProfile.findUnique({
+      where: { userId }
+    });
+
+    if (!userProfile) {
+      // Create a basic profile if none exists
+      return this.getFallbackRecommendations({ 
+        productId, 
+        shopDomain, 
+        limit 
+      });
+    }
+
+    // Find products similar to ones the user has shown interest in
+    const recommendations = await prisma.productMetadata.findMany({
+      where: {
+        shopDomain,
+        productId: { 
+          not: productId, // Exclude current product
+          notIn: userProfile.viewedProducts // Prefer new products they haven't seen
+        },
+        OR: [
+          // Match by collections
+          {
+            collections: {
+              hasSome: currentProduct.collections
+            }
+          },
+          // Match by tags
+          {
+            tags: {
+              hasSome: currentProduct.tags
+            }
+          },
+          // Match by type
+          {
+            type: currentProduct.type
+          },
+          // Match preferred brands if user has preferences
+          ...(userProfile.preferredBrands.length > 0 ? [
+            { vendor: { in: userProfile.preferredBrands } }
+          ] : []),
+          // Match preferred categories if user has preferences
+          ...(userProfile.preferredCategories.length > 0 ? [
+            { collections: { hasSome: userProfile.preferredCategories } }
+          ] : [])
+        ]
+      },
+      orderBy: [
+        { popularity: 'desc' } // Sort by overall popularity
+      ],
+      take: limit * 2 // Get more than needed to allow for filtering
+    });
+
+    // Store these recommendations for future quick access
+    const now = new Date();
+    for (const rec of recommendations.slice(0, limit)) {
+      await prisma.productRecommendation.upsert({
+        where: {
+          sourceProductId_recommendedProductId_recommendationType: {
+            sourceProductId: productId,
+            recommendedProductId: rec.productId,
+            recommendationType: "PERSONALIZED"
+          }
+        },
+        update: {
+          score: rec.popularity,
+          lastCalculated: now
+        },
+        create: {
+          shopDomain,
+          sourceProductId: productId,
+          recommendedProductId: rec.productId,
+          recommendationType: "PERSONALIZED",
+          score: rec.popularity,
+          lastCalculated: now
+        }
+      });
+    }
+
+    return recommendations.slice(0, limit);
+  }
+
+  // Generate recommendations based on current session behavior
+  static async generateSessionBasedRecommendations({
+    productId,
+    shopDomain,
+    sessionId,
+    limit
+  }) {
+    // Find products viewed in this session
+    const sessionViews = await prisma.productView.findMany({
+      where: {
+        sessionId,
+        shopDomain,
+        productId: { not: productId } // Exclude current product
+      },
+      orderBy: { viewedAt: 'desc' },
+      take: 10 // Recent views
+    });
+
+    if (sessionViews.length === 0) {
+      return this.getFallbackRecommendations({ 
+        productId, 
+        shopDomain, 
+        limit 
+      });
+    }
+
+    // Get viewed product IDs
+    const viewedProductIds = sessionViews.map(view => view.productId);
+
+    // Find products similar to what they've viewed this session
+    const recommendations = await prisma.productMetadata.findMany({
+      where: {
+        shopDomain,
+        productId: { 
+          not: productId,
+          notIn: viewedProductIds // Don't recommend what they've already seen
+        },
+        OR: [
+          // Find products commonly viewed together with session products
+          {
+            productId: {
+              in: await this.getCoViewedProducts(viewedProductIds, shopDomain)
+            }
+          },
+          // Find products in same collections as what they viewed
+          {
+            collections: {
+              hasSome: await this.getCollectionsFromProducts(viewedProductIds, shopDomain)
+            }
+          }
+        ]
+      },
+      orderBy: { popularity: 'desc' },
+      take: limit
+    });
+
+    return recommendations;
+  }
+
+  // Get fallback recommendations when personalization isn't possible
+  static async getFallbackRecommendations({
+    productId = null,
+    shopDomain,
+    limit = 5
+  }) {
+    // If we have a product ID, try to get similar products
+    if (productId) {
+      const sourceProduct = await prisma.productMetadata.findFirst({
+        where: {
+          productId,
+          shopDomain
+        }
+      });
+
+      if (sourceProduct) {
+        // Find products with same collections, tags, or type
+        return prisma.productMetadata.findMany({
+          where: {
+            shopDomain,
+            productId: { not: productId },
+            OR: [
+              { collections: { hasSome: sourceProduct.collections } },
+              { tags: { hasSome: sourceProduct.tags } },
+              { type: sourceProduct.type }
+            ]
+          },
+          orderBy: { popularity: 'desc' },
+          take: limit
+        });
+      }
+    }
+
+    // Last resort: just return popular products
+    return prisma.productMetadata.findMany({
+      where: { shopDomain },
+      orderBy: { popularity: 'desc' },
+      take: limit
+    });
+  }
+
+  // Helper method to get products that are commonly viewed together
+  static async getCoViewedProducts(productIds, shopDomain) {
+    // Find sessions where these products were viewed
+    const sessions = await prisma.productView.findMany({
+      where: {
+        shopDomain,
+        productId: { in: productIds },
+        sessionId: { not: null }
+      },
+      select: { sessionId: true },
+      distinct: ['sessionId']
+    });
+
+    const sessionIds = sessions.map(s => s.sessionId).filter(Boolean);
+
+    // Find other products viewed in these sessions
+    const coViewed = await prisma.productView.findMany({
+      where: {
+        shopDomain,
+        sessionId: { in: sessionIds },
+        productId: { notIn: productIds } // Exclude original products
+      },
+      select: { productId: true },
+      distinct: ['productId'],
+      take: 20
+    });
+
+    return coViewed.map(p => p.productId);
+  }
+
+  // Helper method to get collections from product IDs
+  static async getCollectionsFromProducts(productIds, shopDomain) {
+    const products = await prisma.productMetadata.findMany({
+      where: {
+        shopDomain,
+        productId: { in: productIds }
+      },
+      select: { collections: true }
+    });
+
+    // Flatten and deduplicate collections
+    return [...new Set(products.flatMap(p => p.collections))];
+  }
+
+  // Update product popularity scores (run periodically)
+  static async updateProductPopularityScores(shopDomain) {
+    // Get all products
+    const products = await prisma.productMetadata.findMany({
+      where: { shopDomain },
+      select: { productId: true }
+    });
+
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+
+    for (const product of products) {
+      // Count views in last 30 days
+      const viewCount = await prisma.productView.count({
+        where: {
+          shopDomain,
+          productId: product.productId,
+          viewedAt: { gte: thirtyDaysAgo }
+        }
+      });
+
+      // Count purchases in last 30 days
+      const purchaseCount = await prisma.orderItem.count({
+        where: {
+          productId: product.productId,
+          order: {
+            shopDomain,
+            completedAt: { gte: thirtyDaysAgo }
+          }
+        }
+      });
+
+      // Calculate popularity score (purchases weighted higher than views)
+      const popularityScore = (viewCount * 1) + (purchaseCount * 10);
+
+      // Update product popularity
+      await prisma.productMetadata.update({
+        where: { productId: product.productId },
+        data: { popularity: popularityScore }
+      });
+    }
+  }
+
+  // Generate "frequently bought together" recommendations
+  static async generateFrequentlyBoughtTogether(shopDomain) {
+    // Get all orders from the last 90 days
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+
+    const orders = await prisma.order.findMany({
+      where: {
+        shopDomain,
+        completedAt: { gte: ninetyDaysAgo }
+      },
+      include: {
+        orderItems: true
+      }
+    });
+
+    // Track product co-occurrence
+    const coOccurrence = {};
+
+    // Process each order to find products bought together
+    for (const order of orders) {
+      const items = order.orderItems;
+      
+      // Skip single-item orders
+      if (items.length <= 1) continue;
+
+      // For each product pair in the order
+      for (let i = 0; i < items.length; i++) {
+        for (let j = i + 1; j < items.length; j++) {
+          const pid1 = items[i].productId;
+          const pid2 = items[j].productId;
+          
+          // Store both directions
+          if (!coOccurrence[pid1]) coOccurrence[pid1] = {};
+          if (!coOccurrence[pid2]) coOccurrence[pid2] = {};
+          
+          coOccurrence[pid1][pid2] = (coOccurrence[pid1][pid2] || 0) + 1;
+          coOccurrence[pid2][pid1] = (coOccurrence[pid2][pid1] || 0) + 1;
+        }
+      }
+    }
+
+    // Store the co-occurrence data as recommendations
+    const now = new Date();
+    
+    for (const sourceProductId in coOccurrence) {
+      // Get top 10 co-occurring products
+      const relatedProducts = Object.entries(coOccurrence[sourceProductId])
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 10);
+      
+      for (const [recommendedProductId, score] of relatedProducts) {
+        await prisma.productRecommendation.upsert({
+          where: {
+            sourceProductId_recommendedProductId_recommendationType: {
+              sourceProductId,
+              recommendedProductId,
+              recommendationType: "FREQUENTLY_BOUGHT_TOGETHER"
+            }
+          },
+          update: {
+            score,
+            lastCalculated: now
+          },
+          create: {
+            shopDomain,
+            sourceProductId,
+            recommendedProductId,
+            recommendationType: "FREQUENTLY_BOUGHT_TOGETHER",
+            score,
+            lastCalculated: now
+          }
+        });
+      }
+    }
+  }
+
+  // Update user profile with their behavior data
+  static async updateUserProfile(userId, shopDomain) {
+    // Get all user's product views
+    const productViews = await prisma.productView.findMany({
+      where: {
+        userId,
+        shopDomain
+      },
+      orderBy: { viewedAt: 'desc' },
+      take: 100 // Consider last 100 views
+    });
+
+    // Get user's purchase history
+    const orders = await prisma.order.findMany({
+      where: {
+        userId,
+        shopDomain
+      },
+      include: {
+        orderItems: true
+      },
+      orderBy: { completedAt: 'desc' }
+    });
+
+    // Extract viewed product IDs (most recent first)
+    const viewedProducts = productViews.map(view => view.productId);
+    
+    // Extract purchased product IDs
+    const purchasedProducts = orders.flatMap(order => 
+      order.orderItems.map(item => item.productId)
+    );
+
+    // Get metadata for these products to determine preferences
+    const viewedProductDetails = await prisma.productMetadata.findMany({
+      where: {
+        productId: { in: [...viewedProducts, ...purchasedProducts] },
+        shopDomain
+      }
+    });
+
+    // Extract user preferences
+    const allTags = viewedProductDetails.flatMap(p => p.tags);
+    const allCollections = viewedProductDetails.flatMap(p => p.collections);
+    const allBrands = viewedProductDetails.map(p => p.vendor).filter(Boolean);
+    
+    // Count occurrences of each preference
+    const tagCounts = this.countOccurrences(allTags);
+    const collectionCounts = this.countOccurrences(allCollections);
+    const brandCounts = this.countOccurrences(allBrands);
+
+    // Get top preferences
+    const preferredCategories = this.getTopItems(collectionCounts, 5);
+    const preferredBrands = this.getTopItems(brandCounts, 3);
+
+    // Calculate price range
+    const prices = viewedProductDetails.map(p => p.price).filter(Boolean);
+    const preferredPriceRange = prices.length > 0 ? {
+      min: Math.min(...prices) * 0.8, // 20% below minimum
+      max: Math.max(...prices) * 1.2  // 20% above maximum
+    } : null;
+
+    // Update or create user profile
+    await prisma.userProfile.upsert({
+      where: { userId },
+      update: {
+        preferredCategories,
+        preferredBrands,
+        preferredPriceRange,
+        viewedProducts: viewedProducts.slice(0, 20), // Keep most recent 20
+        purchasedProducts,
+        lastActive: new Date()
+      },
+      create: {
+        userId,
+        shopDomain,
+        preferredCategories,
+        preferredBrands,
+        preferredPriceRange,
+        viewedProducts: viewedProducts.slice(0, 20),
+        purchasedProducts,
+        lastActive: new Date()
+      }
+    });
+  }
+
+  // Helper to count occurrences
+  static countOccurrences(array) {
+    return array.reduce((acc, item) => {
+      acc[item] = (acc[item] || 0) + 1;
+      return acc;
+    }, {});
+  }
+  
+  // Helper to get top N items
+  static getTopItems(countObject, n) {
+    return Object.entries(countObject)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, n)
+      .map(([item]) => item);
+  }
+}
+
+
+**************************************
+// app/components/ProductRecommendations.jsx
+import { useEffect, useState } from 'react';
+import { useNavigate } from '@remix-run/react';
+
+export function ProductRecommendations({ 
+  currentProductId, 
+  shopDomain,
+  userId, 
+  sessionId, 
+  title = "You might like these",
+  limit = 4,
+  recommendationType = "SIMILAR_PRODUCTS" 
+}) {
+  const [recommendations, setRecommendations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    async function fetchRecommendations() {
+      try {
+        setLoading(true);
+        const response = await fetch(`/api/recommendations?${new URLSearchParams({
+          productId: currentProductId,
+          shopDomain,
+          userId: userId || '',
+          sessionId: sessionId || '',
+          limit,
+          recommendationType
+        })}`);
+        
+        if (response.ok) {
+          const data = await response.json();
+          setRecommendations(data.recommendations || []);
+        }
+      } catch (error) {
+        console.error('Error fetching recommendations:', error);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    if (currentProductId && shopDomain) {
+      fetchRecommendations();
+    }
+  }, [currentProductId, shopDomain, userId, sessionId, limit, recommendationType]);
+
+  // Track click events
+  const handleProductClick = async (productId) => {
+    // Send analytics event
+    try {
+      await fetch('/api/events', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shop-Domain': shopDomain,
+          'X-Shopify-Event': 'recommendation_click'
+        },
+        body: JSON.stringify({
+          event: 'recommendation_click',
+          data: {
+            sourceProductId: currentProductId,
+            recommendedProductId: productId,
+            recommendationType,
+            timestamp: new Date().toISOString(),
+            sessionId,
+            userId
+          },
+          timestamp: new Date().toISOString(),
+          shop: shopDomain
+        }),
+        credentials: 'same-origin'
+      });
+    } catch (error) {
+      console.error('Error tracking recommendation click:', error);
+    }
+    
+    // Navigate to the product page
+    navigate(`/products/${productId}`);
+  };
+
+  if (loading) {
+    return (
+      <div className="recommendations-container">
+        <h3>{title}</h3>
+        <div className="recommendations-grid">
+          {Array.from({ length: limit }).map((_, i) => (
+            <div key={i} className="recommendation-card skeleton"></div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (recommendations.length === 0) {
+    return null; // Don't show empty recommendations
+  }
+
+  return (
+    <div className="recommendations-container">
+      <h3>{title}</h3>
+      <div className="recommendations-grid">
+        {recommendations.map(product => (
+          <div 
+            key={product.productId} 
+            className="recommendation-card"
+            onClick={() => handleProductClick(product.productId)}
+          >
+            <div className="recommendation-image">
+              {/* You can add a product image here */}
+              <div className="placeholder-image"></div>
+            </div>
+            <div className="recommendation-details">
+              <h4>{product.title}</h4>
+              <p className="price">${product.price.toFixed(2)}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
+***********************************
+// app/routes/api.recommendations.js
+import { json } from "@remix-run/node";
+import { RecommendationEngine } from "~/services/recommendationEngine.server";
+
+// API endpoint to get product recommendations
+export async function loader({ request }) {
+  const url = new URL(request.url);
+  const productId = url.searchParams.get("productId");
+  const shopDomain = url.searchParams.get("shopDomain");
+  const userId = url.searchParams.get("userId") || null;
+  const sessionId = url.searchParams.get("sessionId") || null;
+  const limit = parseInt(url.searchParams.get("limit") || "5", 10);
+  const recommendationType = url.searchParams.get("recommendationType") || "SIMILAR_PRODUCTS";
+  
+  if (!shopDomain) {
+    return json({ error: "Shop domain is required" }, { status: 400 });
+  }
+
+  try {
+    // Get recommendations from our engine
+    const recommendations = await RecommendationEngine.getProductRecommendations({
+      productId,
+      shopDomain,
+      userId,
+      sessionId,
+      limit,
+      recommendationType
+    });
+
+    return json({ recommendations });
+  } catch (error) {
+    console.error("Error getting recommendations:", error);
+    return json({ error: "Failed to get recommendations" }, { status: 500 });
+  }
+}
+
+*********************************************
+
+// app/components/SessionTracker.client.jsx
+// Note: This is a client-only component
+
+import { useEffect } from 'react';
+import { v4 as uuidv4 } from 'uuid';
+
+export function SessionTracker({ shopDomain }) {
+  useEffect(() => {
+    // Initialize or get existing session ID
+    let sessionId = localStorage.getItem('shopifySessionId');
+    const userId = localStorage.getItem('shopifyUserId') || uuidv4();
+    
+    // Set a user ID for anonymous tracking
+    if (!localStorage.getItem('shopifyUserId')) {
+      localStorage.setItem('shopifyUserId', userId);
+    }
+    
+    // Create a new session if none exists or it's expired
+    const lastActivity = localStorage.getItem('shopifyLastActivity');
+    const sessionExpired = lastActivity && 
+      (Date.now() - parseInt(lastActivity, 10)) > 30 * 60 * 1000; // 30 minutes
+    
+    if (!sessionId || sessionExpired) {
+      sessionId = `sess_${uuidv4()}`;
+      localStorage.setItem('shopifySessionId', sessionId);
+      
+      // Track session start
+      fetch('/api/events', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shop-Domain': shopDomain,
+          'X-Shopify-Event': 'session_started'
+        },
+        body: JSON.stringify({
+          event: 'session_started',
+          data: {
+            sessionId,
+            userId,
+            timestamp: new Date().toISOString()
+          },
+          timestamp: new Date().toISOString(),
+          shop: shopDomain
+        }),
+        credentials: 'same-origin'
+      });
+    }
+    
+    // Update the last activity timestamp
+    localStorage.setItem('shopifyLastActivity', Date.now().toString());
+
+    // Optionally, track user activity (e.g., page view)
+    fetch('/api/events', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Shop-Domain': shopDomain,
+        'X-Shopify-Event': 'user_activity'
+      },
+      body: JSON.stringify({
+        event: 'user_activity',
+        data: {
+          sessionId,
+          userId,
+          activityType: 'page_view',
+          page: window.location.pathname,
+          timestamp: new Date().toISOString()
+        },
+        timestamp: new Date().toISOString(),
+        shop: shopDomain
+      }),
+      credentials: 'same-origin'
+    });
+    
+    // Cleanup session tracking when component unmounts
+    return () => {
+      // Optionally track session end
+      fetch('/api/events', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Shop-Domain': shopDomain,
+          'X-Shopify-Event': 'session_ended'
+        },
+        body: JSON.stringify({
+          event: 'session_ended',
+          data: {
+            sessionId,
+            userId,
+            timestamp: new Date().toISOString()
+          },
+          timestamp: new Date().toISOString(),
+          shop: shopDomain
+        }),
+        credentials: 'same-origin'
+      });
+    };
+  }, [shopDomain]);
+
+  return null; // This component is just used for tracking, it does not render anything
+}

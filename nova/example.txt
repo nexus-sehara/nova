@@ -1,0 +1,305 @@
+
+
+// app/routes/api.events.js - Remix route to handle Shopify events
+import { json } from "@remix-run/node";
+import { prisma } from "~/db.server"; // Adjust this import to match your Remix app structure
+
+export const action = async ({ request }) => {
+  // Only allow POST requests
+  if (request.method !== "POST") {
+    return json({ error: "Method not allowed" }, { status: 405 });
+  }
+
+  try {
+    // Extract data from the request
+    const shopDomain = request.headers.get("x-shop-domain");
+    const eventName = request.headers.get("x-shopify-event");
+    
+    if (!shopDomain || !eventName) {
+      return json({ error: "Missing required headers" }, { status: 400 });
+    }
+    
+    // Parse the request body
+    const { event, data, timestamp } = await request.json();
+    
+    if (!data) {
+      return json({ error: "Missing event data" }, { status: 400 });
+    }
+    
+    console.log(`Received ${event} event from ${shopDomain}`);
+    
+    // Store the raw event in Prisma
+    const storedEvent = await prisma.shopifyEvent.create({
+      data: {
+        eventName,
+        shopDomain,
+        eventData: data, // Prisma will handle JSON serialization
+        timestamp: new Date(timestamp),
+      },
+    });
+    
+    // Process specific event types
+    switch (eventName) {
+      case 'page_viewed':
+        await processPageView(data, shopDomain);
+        break;
+      case 'product_viewed':
+        await processProductView(data, shopDomain);
+        break;
+      case 'add_to_cart':
+        await processAddToCart(data, shopDomain);
+        break;
+      case 'checkout_completed':
+        await processCheckoutCompleted(data, shopDomain);
+        break;
+    }
+    
+    return json({ success: true, eventId: storedEvent.id });
+  } catch (error) {
+    console.error("Error processing Shopify event:", error);
+    return json({ error: "Failed to process event" }, { status: 500 });
+  }
+};
+
+// Individual event processing functions
+async function processPageView(data, shopDomain) {
+  // You can add specific logic for page views if needed
+  // For now, we just store the raw event
+  return;
+}
+
+async function processProductView(data, shopDomain) {
+  try {
+    // Extract product info
+    const { productVariant, productId } = data;
+    
+    // Store in the ProductView table
+    await prisma.productView.create({
+      data: {
+        productId: productId || productVariant.productId || "unknown",
+        variantId: productVariant.id || "unknown",
+        productTitle: productVariant.title || "Unknown Product",
+        price: parseFloat(productVariant.price || 0),
+        shopDomain,
+        viewedAt: new Date(),
+      },
+    });
+  } catch (error) {
+    console.error("Error processing product view:", error);
+  }
+}
+
+async function processAddToCart(data, shopDomain) {
+  try {
+    const { cartLine } = data;
+    
+    await prisma.cartEvent.create({
+      data: {
+        shopDomain,
+        productId: cartLine.merchandise.productId || "unknown",
+        variantId: cartLine.merchandise.id || "unknown",
+        quantity: cartLine.quantity || 1,
+        price: parseFloat(cartLine.merchandise.price?.amount || 0),
+        eventType: 'ADD_TO_CART',
+        timestamp: new Date(),
+      },
+    });
+  } catch (error) {
+    console.error("Error processing add to cart:", error);
+  }
+}
+
+async function processCheckoutCompleted(data, shopDomain) {
+  try {
+    const { checkout } = data;
+    
+    await prisma.order.create({
+      data: {
+        shopDomain,
+        orderId: checkout.order.id,
+        orderNumber: checkout.order.orderNumber || "unknown",
+        totalPrice: parseFloat(checkout.totalPrice?.amount || 0),
+        completedAt: new Date(),
+      },
+    });
+  } catch (error) {
+    console.error("Error processing checkout completed:", error);
+  }
+}
+
+// Handle GET requests for testing the endpoint
+export const loader = async ({ request }) => {
+  return json({ status: "Events API endpoint is running" });
+};
+
+// app/db.server.js - Prisma client singleton for Remix
+import { PrismaClient } from "@prisma/client";
+
+let prisma;
+
+// Prevent multiple instances of Prisma Client in development
+if (process.env.NODE_ENV === "production") {
+  prisma = new PrismaClient();
+} else {
+  if (!global.__db__) {
+    global.__db__ = new PrismaClient();
+  }
+  prisma = global.__db__;
+  prisma.$connect();
+}
+
+export { prisma };
+
+
+// shopify.app.toml - Extension configuration
+name = "My Shopify Analytics Extension"
+id = "1094091119" # Replace with your actual extension ID
+
+[[extensions]]
+type = "web_pixel"
+name = "My Analytics Pixel"
+handle = "my-analytics-pixel"
+targeting = "all"
+
+[[extensions.metafields]]
+namespace = "shopify"
+key = "theme_id"
+
+[[extensions.settings]]
+name = "Remix App URL"
+description = "The URL of your Remix app"
+type = "url"
+key = "remixAppUrl"
+required = true
+
+[extensions.targeting]
+included_surfaces = ["checkout"]
+
+// app/routes/analytics/index.jsx - Dashboard view for analytics
+import { json, useLoaderData } from "@remix-run/react";
+import { prisma } from "~/db.server";
+
+export async function loader() {
+  // Get today's date and 30 days ago
+  const today = new Date();
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(today.getDate() - 30);
+
+  // Fetch analytics data from Prisma
+  const pageViews = await prisma.shopifyEvent.count({
+    where: {
+      eventName: "page_viewed",
+      timestamp: {
+        gte: thirtyDaysAgo,
+        lte: today
+      }
+    }
+  });
+
+  const productViews = await prisma.productView.count({
+    where: {
+      viewedAt: {
+        gte: thirtyDaysAgo,
+        lte: today
+      }
+    }
+  });
+
+  const addToCartEvents = await prisma.cartEvent.count({
+    where: {
+      eventType: "ADD_TO_CART",
+      timestamp: {
+        gte: thirtyDaysAgo,
+        lte: today
+      }
+    }
+  });
+
+  const orders = await prisma.order.count({
+    where: {
+      completedAt: {
+        gte: thirtyDaysAgo,
+        lte: today
+      }
+    }
+  });
+
+  // Get top products viewed
+  const topProducts = await prisma.productView.groupBy({
+    by: ['productId', 'productTitle'],
+    _count: {
+      productId: true
+    },
+    orderBy: {
+      _count: {
+        productId: 'desc'
+      }
+    },
+    take: 5
+  });
+
+  return json({
+    pageViews,
+    productViews,
+    addToCartEvents,
+    orders,
+    topProducts,
+    period: {
+      start: thirtyDaysAgo.toISOString().split('T')[0],
+      end: today.toISOString().split('T')[0]
+    }
+  });
+}
+
+export default function AnalyticsDashboard() {
+  const data = useLoaderData();
+
+  return (
+    <div className="analytics-dashboard">
+      <h1>Shopify Analytics Dashboard</h1>
+      <p>Data for period: {data.period.start} to {data.period.end}</p>
+
+      <div className="metrics-grid">
+        <div className="metric-card">
+          <h2>Page Views</h2>
+          <p className="metric-value">{data.pageViews}</p>
+        </div>
+
+        <div className="metric-card">
+          <h2>Product Views</h2>
+          <p className="metric-value">{data.productViews}</p>
+        </div>
+
+        <div className="metric-card">
+          <h2>Add to Cart Events</h2>  
+          <p className="metric-value">{data.addToCartEvents}</p>
+        </div>
+
+        <div className="metric-card">
+          <h2>Orders</h2>
+          <p className="metric-value">{data.orders}</p>
+        </div>
+      </div>
+
+      <div className="top-products">
+        <h2>Top Viewed Products</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>Product</th>
+              <th>Views</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.topProducts.map(product => (
+              <tr key={product.productId}>
+                <td>{product.productTitle}</td>
+                <td>{product._count.productId}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
