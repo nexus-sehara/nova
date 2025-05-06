@@ -3,49 +3,47 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-// Define allowed origin for CORS - make more flexible
+// Define allowed origin for CORS - fully permissive for all domains
 const allowedOrigins = [
-  "https://mysmartap.myshopify.com",
-  "https://nova-ebgc.onrender.com",
-  // Add wildcard for Shopify domains
-  "*.myshopify.com"
+  "https://nova-ebgc.onrender.com", // Our app domain
+  "*"  // Allow all domains
 ];
 
 // Helper function to create CORS headers
 const getCorsHeaders = (origin) => {
-  // If no origin provided or it's null, allow any origin for development
+  // If no origin provided or it's null, allow any origin
   if (!origin) {
     return {
       "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Methods": "POST, OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type",
+      "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
+      "Access-Control-Allow-Headers": "Content-Type, Origin, Accept",
+      "Access-Control-Max-Age": "86400", // 24 hours cache for preflight
     };
   }
   
-  // Check if origin matches any of our allowed origins
-  // For wildcard domains like *.myshopify.com, do a partial match
-  const isAllowed = allowedOrigins.some(allowed => {
-    if (allowed.startsWith('*.')) {
-      // Convert *.domain.com to .domain.com for matching
-      const suffix = allowed.substring(1);
-      return origin.endsWith(suffix);
-    }
-    return origin === allowed;
-  });
-  
-  // If the origin is allowed, echo it back, otherwise use the default
-  const allowOrigin = isAllowed ? origin : allowedOrigins[0];
-  
+  // For a public API endpoint that accepts requests from any domain,
+  // simply echo back the requesting origin
   return {
-    "Access-Control-Allow-Origin": allowOrigin,
-    "Access-Control-Allow-Methods": "POST, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
+    "Access-Control-Allow-Headers": "Content-Type, Origin, Accept",
+    "Access-Control-Max-Age": "86400", // 24 hours cache for preflight
   };
 };
 
+// Dedicated endpoint for OPTIONS preflight requests
+export async function options({ request }) {
+  const origin = request.headers.get("Origin") || "*";
+  
+  return new Response(null, {
+    status: 204, // No Content
+    headers: getCorsHeaders(origin),
+  });
+}
+
 export const action = async ({ request }) => {
   // Get the origin from request headers
-  const origin = request.headers.get("Origin") || allowedOrigins[0];
+  const origin = request.headers.get("Origin") || "*";
   
   // Handle OPTIONS preflight request for CORS
   if (request.method === "OPTIONS") {
@@ -65,7 +63,21 @@ export const action = async ({ request }) => {
 
   try {
     // Parse the event data from the request first
-    const eventData = await request.json();
+    let eventData;
+    
+    try {
+      eventData = await request.json();
+    } catch (parseError) {
+      // Check if the request might be a URL-encoded form
+      const contentType = request.headers.get("Content-Type") || "";
+      if (contentType.includes("application/x-www-form-urlencoded")) {
+        const formData = await request.formData();
+        // Convert FormData to a regular object
+        eventData = Object.fromEntries(formData.entries());
+      } else {
+        throw parseError;
+      }
+    }
 
     // Get the shop from the event data payload
     const shop = eventData.shop;

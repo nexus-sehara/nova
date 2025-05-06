@@ -1,0 +1,63 @@
+name: Auto Update Repository
+
+on:
+  # Run on push to main branch
+  push:
+    branches: [main]
+  # Run on pull request to main branch
+  pull_request:
+    branches: [main]
+  # Run on a schedule (daily at midnight UTC)
+  schedule:
+    - cron: '0 0 * * *'
+  # Allow manual trigger from GitHub Actions tab
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Build project if needed
+        run: npm run build --if-present
+      
+      - name: Run tests if available
+        run: npm test --if-present
+      
+      - name: Configure Git
+        run: |
+          git config --global user.name 'GitHub Actions Bot'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+      
+      # Only run auto-commit on scheduled and manual workflow runs
+      - name: Auto-commit changes if any
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+        run: |
+          if [[ -n $(git status --porcelain) ]]; then
+            git add --all
+            git commit -m "Automated update via GitHub Actions [skip ci]"
+            git push
+          else
+            echo "No changes to commit"
+          fi
+      
+      # Optional: Deploy to production
+      # Uncomment and configure as needed
+      # - name: Deploy to production
+      #   if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+      #   run: |
+      #     # Add deployment commands here 
