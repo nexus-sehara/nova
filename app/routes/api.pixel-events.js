@@ -9,11 +9,22 @@ const allowedOrigins = [
   "*"  // Allow all domains
 ];
 
-// Helper function to create CORS headers - SIMPLIFIED VERSION
+// Helper function to create CORS headers for Shopify Web Pixels (including null origins)
 const getCorsHeaders = (origin) => {
-  // For any public API endpoint, simply echo back the requesting origin
+  // Shopify's sandboxed environments often send requests with "null" origin
+  // We need to handle this specific case while still being secure
+  if (!origin || origin === "null") {
+    return {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
+      "Access-Control-Allow-Headers": "Content-Type, Origin, Accept",
+      "Access-Control-Max-Age": "86400", // 24 hours cache for preflight
+    };
+  }
+  
+  // For non-null origins, reflect back the requesting origin
   return {
-    "Access-Control-Allow-Origin": origin || "*",
+    "Access-Control-Allow-Origin": origin,
     "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
     "Access-Control-Allow-Headers": "Content-Type, Origin, Accept",
     "Access-Control-Max-Age": "86400", // 24 hours cache for preflight
@@ -22,7 +33,7 @@ const getCorsHeaders = (origin) => {
 
 // Dedicated endpoint for OPTIONS preflight requests
 export async function options({ request }) {
-  const origin = request.headers.get("Origin") || "*";
+  const origin = request.headers.get("Origin");
   
   return new Response(null, {
     status: 204, // No Content

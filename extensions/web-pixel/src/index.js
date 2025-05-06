@@ -71,9 +71,33 @@ register(({ analytics, browser, config }) => {
       
       console.log(`Attempting to send ${eventType} event to ${API_ENDPOINT}`);
       
-      // Try multiple approaches in sequence - if one fails, try another
+      // Try multiple approaches in sequence - optimized for Shopify sandbox environment
       
-      // Approach 1: Use XMLHttpRequest (works in some Shopify sandbox contexts)
+      // Approach 1: Use fetch with no-cors mode - this works in the Shopify sandbox
+      const sendWithFetch = () => {
+        return new Promise((resolve, reject) => {
+          try {
+            // Using fetch with no-cors mode to avoid CORS issues in the sandbox
+            fetch(`${BEACON_ENDPOINT}?event=${encodeURIComponent(eventType)}&shop=${encodeURIComponent(shopDomain)}&ts=${Date.now()}&acc=${encodeURIComponent(accountID)}`, {
+              method: 'GET',
+              mode: 'no-cors' // Critical: Use no-cors mode for sandbox environment
+            })
+            .then(() => {
+              console.log(`Successfully sent ${eventType} with query params`);
+              resolve(true);
+            })
+            .catch(error => {
+              console.error(`Fetch error for ${eventType}:`, error);
+              reject(error);
+            });
+          } catch (error) {
+            console.error(`Fetch setup error for ${eventType}:`, error);
+            reject(error);
+          }
+        });
+      };
+      
+      // Approach 2: XMLHttpRequest as fallback
       const sendWithXhr = () => {
         return new Promise((resolve, reject) => {
           try {
@@ -104,63 +128,9 @@ register(({ analytics, browser, config }) => {
         });
       };
       
-      // Approach 2: Try Beacon API (works in some browsers but not sandboxed environments)
-      const sendWithBeacon = () => {
-        return new Promise((resolve, reject) => {
-          try {
-            if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
-              const success = navigator.sendBeacon(BEACON_ENDPOINT, JSON.stringify(payload));
-              if (success) {
-                console.log(`Successfully sent ${eventType} with Beacon API`);
-                resolve(true);
-              } else {
-                console.error(`Failed to send ${eventType} with Beacon API`);
-                reject(new Error('Beacon failed'));
-              }
-            } else {
-              reject(new Error('Beacon API not available'));
-            }
-          } catch (error) {
-            console.error(`Beacon error for ${eventType}:`, error);
-            reject(error);
-          }
-        });
-      };
-      
-      // Approach 3: URL with query params (works in most sandboxed environments)
-      const sendWithQueryParams = () => {
-        return new Promise((resolve, reject) => {
-          try {
-            // Build URL with parameters
-            const params = new URLSearchParams({
-              event: eventType,
-              shop: shopDomain,
-              ts: Date.now(),
-              acc: accountID
-            });
-            
-            // Use fetch to make a GET request as a last resort
-            fetch(`${BEACON_ENDPOINT}?${params.toString()}`, {
-              method: 'GET',
-              mode: 'no-cors' // This helps with CORS issues
-            })
-            .then(() => {
-              console.log(`Successfully sent ${eventType} with query params`);
-              resolve(true);
-            })
-            .catch(error => {
-              console.error(`Query params fetch error for ${eventType}:`, error);
-              reject(error);
-            });
-          } catch (error) {
-            console.error(`Query params error for ${eventType}:`, error);
-            reject(error);
-          }
-        });
-      };
-      
-      // Try each method in sequence, falling back to the next if one fails
-      sendWithXhr().catch(() => sendWithBeacon()).catch(() => sendWithQueryParams()).catch(finalError => {
+      // Start with fetch with no-cors which works well in sandboxed environments,
+      // then try XMLHttpRequest as a fallback
+      sendWithFetch().catch(() => sendWithXhr()).catch(finalError => {
         console.error(`All tracking methods failed for ${eventType}:`, finalError);
       });
     });
