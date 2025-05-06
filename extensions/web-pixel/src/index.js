@@ -117,7 +117,7 @@ function sendToAnalytics(eventName, eventData) {
 
     console.log(`Sending ${eventName} event via BROWSER fetch to API for shop ${shopDomain}`);
     
-    const apiUrl = 'https://coral-annex-gmt-proceeds.trycloudflare.com/api/pixel-events'; // <-- UPDATED URL
+    const apiUrl = '//nova-ebgc.onrender.com/api/pixel-events'; // <-- UPDATED URL
 
     if (!browser || typeof browser.fetch !== 'function') {
       console.error('browser.fetch is not available or not a function. Cannot send analytics event. Type:', typeof browser.fetch);
