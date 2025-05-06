@@ -2,7 +2,7 @@
 
 client_id = "af0837af52a3ec00869d94fe5c0d74d5"
 name = "nova"
-handle = "nova-6"
+handle = "smartnova-app"
 application_url = "https://nova-ebgc.onrender.com"
 embedded = true
 
