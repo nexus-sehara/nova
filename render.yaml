@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: nova-app
+    env: node
+    buildCommand: cd nova && npm install && npm run build
+    startCommand: cd nova && npm start
+    envVars:
+      - key: NODE_ENV
+        value: production 
