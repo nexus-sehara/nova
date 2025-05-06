@@ -1,0 +1,27 @@
+'ve created several scripts to help you resolve the database configuration issue:
+
+setup-database-env.sh - 
+
+A master script that runs all setup steps in sequence:
+Sets up the PostgreSQL database using Docker
+Configures environment variables in your .env file
+Generates the Prisma client
+
+scripts/setup-database.sh - 
+
+A script to set up a PostgreSQL database using Docker:
+Creates a Docker container with PostgreSQL
+Configures the database with proper credentials
+Updates your .env file with the correct DATABASE_URL
+
+scripts/setup-env.sh - 
+
+A script to set up environment variables:
+Creates or updates your .env file
+Preserves existing values when possible
+Generates a secure SESSION_SECRET if needed
+
+scripts/DATABASE-README.md - Documentation for database setup with:
+Step-by-step instructions for Docker and manual setup
+Database structure overview
+Troubleshooting tips
