@@ -92,10 +92,16 @@ export const action = async ({ request }) => {
 
     try {
       // Extract sessionId and other relevant data from the event
-      // Shopify Pixel standard payload often uses `clientId` which can serve as our `sessionId`
       const sessionId = eventData.clientId || `anon-${Date.now()}`; // Fallback if clientId is not present
       const eventTimestamp = new Date(eventData.timestamp);
       const shopDomain = shop; // Already extracted as 'shop'
+      
+      console.log("Processing event data:", {
+        shopDomain,
+        eventName: eventData.eventName,
+        sessionId,
+        timestamp: eventTimestamp
+      });
 
       // Optional: Extract additional details for PixelSession if available in eventData.context
       const context = eventData.context || {};
@@ -111,7 +117,6 @@ export const action = async ({ request }) => {
       const referer = documentContext.referrer || null;
 
       // 1. Upsert PixelSession - using the correct model name
-      // Assumes PixelSession.sessionId is marked @unique in your schema.prisma
       const pixelSession = await prisma.pixelSession.upsert({
         where: { sessionId: sessionId }, 
         update: { 
@@ -131,10 +136,10 @@ export const action = async ({ request }) => {
       });
       console.log(`Upserted PixelSession ID: ${pixelSession.id} for session ${sessionId} in shop ${shopDomain}`);
 
-      // 2. Create ShopifyEvent
+      // 2. Create ShopifyEvent - FIXED: Explicitly include eventName
       const shopifyEvent = await prisma.shopifyEvent.create({
         data: {
-          eventName: eventData.eventName,
+          eventName: eventData.eventName, // Make sure eventName is included
           shopDomain: shopDomain,
           eventData: eventData.data || {}, // Store the 'data' object from the pixel payload
           timestamp: eventTimestamp,
