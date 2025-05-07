@@ -4,27 +4,44 @@ register(({ analytics, browser, config }) => {
   // Initialize with account ID from settings or use a default
   const accountID = config?.accountID || 'demo-account';
   console.log(`Web pixel initialized with account ID: ${accountID}`);
-  
-  // Define multiple endpoints for tracking (for redundancy)
-  const BEACON_ENDPOINTS = [
-    'https://nova-ebgc.onrender.com/api/pixel-events', // This endpoint exists and works
-    'https://nova-ebgc.onrender.com/api/pixel-events.pixel.gif', // Fallback to pixel.gif if needed
-  ];
-  
-  console.log(`Web pixel configured with working tracking endpoints`);
 
-  // Utility function to safely access nested properties
+  // Shopify sandbox-safe session ID logic
+  let sessionId = null;
+  if (browser && browser.sessionId) {
+    sessionId = browser.sessionId;
+  } else if (analytics && analytics.clientId) {
+    sessionId = analytics.clientId;
+  } else {
+    sessionId = `anon-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  }
+
+  // Try to get user ID if available (Shopify customer ID)
+  const getUserId = (event) => {
+    if (event.context && event.context.customer && event.context.customer.id) {
+      return event.context.customer.id;
+    }
+    if (event.customer && event.customer.id) {
+      return event.customer.id;
+    }
+    return null;
+  };
+
+  const BEACON_ENDPOINTS = [
+    'https://nova-ebgc.onrender.com/api/pixel-events',
+    'https://nova-ebgc.onrender.com/api/pixel-events.pixel.gif',
+  ];
+
   const getNestedValue = (obj, path, defaultValue = null) => {
     return path.split('.').reduce((acc, part) => acc && acc[part] ? acc[part] : defaultValue, obj);
   };
 
-  // Handle all standard Shopify events
   const eventTypes = [
     'page_viewed',
     'product_viewed',
     'collection_viewed',
     'search_submitted',
     'product_added_to_cart',
+    'product_removed_from_cart',
     'cart_viewed',
     'checkout_started',
     'checkout_completed',
@@ -33,71 +50,65 @@ register(({ analytics, browser, config }) => {
     'customer_logged_in'
   ];
 
-  // Modified version of the fetch call - try multiple endpoints sequentially
   const trackEvent = async (eventType, trackingParams) => {
     for (const endpoint of BEACON_ENDPOINTS) {
       try {
         console.log(`Trying to send ${eventType} to ${endpoint}`);
-        
-        const response = await fetch(`${endpoint}?${trackingParams.toString()}`, {
+        await fetch(`${endpoint}?${trackingParams.toString()}`, {
           method: 'GET',
-          mode: 'no-cors' // Critical for Shopify's sandbox environment
+          mode: 'no-cors'
         });
-        
         console.log(`Successfully sent ${eventType} event to ${endpoint}`);
-        return; // Stop trying if we get here
+        return;
       } catch (error) {
         console.error(`Failed to send to ${endpoint}:`, error);
-        // Continue to next endpoint
       }
     }
-    
     console.error(`All endpoints failed for ${eventType} event`);
   };
 
-  // Subscribe to all events
   eventTypes.forEach(eventType => {
     analytics.subscribe(eventType, (event) => {
       console.log(`${eventType} event detected`, event);
-      
-      // For specific events, log additional details
-      if (eventType === 'product_viewed') {
-        const product = getNestedValue(event, 'data.productVariant');
-        if (product) {
-          console.log(`Product: ${getNestedValue(product, 'product.title', 'unknown')}, Price: ${getNestedValue(product, 'price.amount', 'unknown')}`);
-        }
-      } else if (eventType === 'checkout_completed') {
-        const checkout = getNestedValue(event, 'data.checkout');
-        if (checkout) {
-          console.log(`Order ID: ${getNestedValue(checkout, 'order.id', 'unknown')}, Total: ${getNestedValue(checkout, 'totalPrice.amount', 'unknown')}`);
-        }
-      }
-      
-      // Try to get shop domain from event context
       let shopDomain = 'unknown-shop.myshopify.com';
       const context = event.context || {};
-      
       if (getNestedValue(context, 'document.location.host')) {
         shopDomain = context.document.location.host;
       } else if (getNestedValue(context, 'shop.domain')) {
         shopDomain = context.shop.domain;
       }
-      
-      // Generate tracking parameters
+      const userId = getUserId(event);
       const trackingParams = new URLSearchParams({
         event: eventType,
         shop: shopDomain,
         ts: Date.now().toString(),
         acc: accountID,
-        id: event.id || event.clientId || `anon-${Date.now()}`
+        id: sessionId,
+        user_id: userId || '',
       });
-      
-      // Add additional data for specific events
       if (eventType === 'product_viewed') {
         const product = getNestedValue(event, 'data.productVariant.product');
+        const variant = getNestedValue(event, 'data.productVariant');
         if (product) {
           trackingParams.append('product_id', product.id || '');
           trackingParams.append('product_title', product.title || '');
+          trackingParams.append('product_category', product.productType || '');
+          trackingParams.append('product_brand', product.vendor || '');
+          trackingParams.append('product_price', getNestedValue(variant, 'price.amount', ''));
+          trackingParams.append('variant_id', variant?.id || '');
+        }
+      } else if (eventType === 'product_added_to_cart' || eventType === 'product_removed_from_cart') {
+        const cartLine = getNestedValue(event, 'data.cartLine');
+        if (cartLine) {
+          const merchandise = cartLine.merchandise || {};
+          const product = merchandise.product || {};
+          trackingParams.append('product_id', product.id || '');
+          trackingParams.append('product_title', product.title || '');
+          trackingParams.append('product_category', product.productType || '');
+          trackingParams.append('product_brand', product.vendor || '');
+          trackingParams.append('product_price', getNestedValue(merchandise, 'price.amount', ''));
+          trackingParams.append('variant_id', merchandise.id || '');
+          trackingParams.append('quantity', cartLine.quantity || '1');
         }
       } else if (eventType === 'checkout_completed') {
         const order = getNestedValue(event, 'data.checkout.order');
@@ -106,8 +117,6 @@ register(({ analytics, browser, config }) => {
           trackingParams.append('order_total', getNestedValue(event, 'data.checkout.totalPrice.amount') || '0');
         }
       }
-      
-      // Use the new trackEvent function
       trackEvent(eventType, trackingParams);
     });
   });

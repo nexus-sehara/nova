@@ -294,12 +294,14 @@ export const loader = async ({ request }) => {
   const hasEventParam = url.searchParams.has('event');
   
   if (hasEventParam) {
-    // Extract tracking parameters
-    const eventName = url.searchParams.get("event") || "unknown";
-    const shop = url.searchParams.get("shop") || "unknown";
-    const timestamp = url.searchParams.get("ts") ? new Date(parseInt(url.searchParams.get("ts"))) : new Date();
-    const accountID = url.searchParams.get("acc") || "unknown";
-    const sessionId = url.searchParams.get("id") || `anon-${Date.now()}`;
+    // Extract all query parameters as an object
+    const params = Object.fromEntries(url.searchParams.entries());
+    const eventName = params.event || "unknown";
+    const shop = params.shop || "unknown";
+    const timestamp = params.ts ? new Date(parseInt(params.ts)) : new Date();
+    const accountID = params.acc || "unknown";
+    const sessionId = params.id || `anon-${Date.now()}`;
+    const userId = params.user_id || null; // If you send user_id from pixel
     
     // Log the event
     console.log(`GET TRACKING: ${eventName} from ${shop}, session: ${sessionId}`);
@@ -324,7 +326,7 @@ export const loader = async ({ request }) => {
         data: {
           eventName,
           shopDomain: shop,
-          eventData: JSON.stringify({ source: "api-endpoint-get" }),
+          eventData: JSON.stringify(params), // Store all params as JSON
           timestamp,
           sessionId,
         },
@@ -335,11 +337,69 @@ export const loader = async ({ request }) => {
         data: {
           shop,
           eventName,
-          eventData: JSON.stringify({ source: "api-endpoint-get" }),
+          eventData: JSON.stringify(params), // Store all params as JSON
           accountId: accountID,
           timestamp,
         },
       });
+      
+      // 4. Populate analytics tables based on event type
+      switch (eventName) {
+        case 'product_viewed':
+          if (params.product_id) {
+            await prisma.productView.create({
+              data: {
+                productId: params.product_id,
+                productTitle: params.product_title || "Unknown Product",
+                price: parseFloat(params.product_price || 0),
+                shopDomain: shop,
+                sessionId: sessionId,
+                userId: userId,
+                viewedAt: timestamp,
+              }
+            });
+          }
+          break;
+        case 'product_added_to_cart':
+        case 'product_removed_from_cart':
+          if (params.product_id) {
+            await prisma.cartEvent.create({
+              data: {
+                shopDomain: shop,
+                productId: params.product_id,
+                variantId: params.variant_id || "unknown",
+                quantity: parseInt(params.quantity || 1),
+                price: parseFloat(params.product_price || 0),
+                sessionId: sessionId,
+                userId: userId,
+                eventType: eventName === 'product_added_to_cart' ? 'ADD_TO_CART' : 'REMOVE_FROM_CART',
+                timestamp: timestamp,
+              }
+            });
+          }
+          break;
+        // Add more cases for other event types as needed
+      }
+      
+      // 5. Track user profile for repeat visits
+      if (userId) {
+        await prisma.userProfile.upsert({
+          where: { userId },
+          update: { lastActive: timestamp },
+          create: {
+            userId,
+            shopDomain: shop,
+            lastActive: timestamp,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+            viewedProducts: params.product_id ? [params.product_id] : [],
+            purchasedProducts: [],
+            preferredCategories: params.product_category ? [params.product_category] : [],
+            preferredBrands: params.product_brand ? [params.product_brand] : [],
+            preferredPriceRange: params.product_price ? { min: params.product_price, max: params.product_price } : null,
+          },
+        });
+      }
       
       console.log(`Saved events via GET: PixelEvent ID ${pixelEvent.id}, ShopifyEvent ID ${shopifyEvent.id}, Session ID ${pixelSession.id}`);
     } catch (error) {
