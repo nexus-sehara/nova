@@ -1,5 +1,6 @@
 // import { authenticate } from "../shopify.server"; // This import is not used for the action, can be removed if not used elsewhere in this file or for other exports
 import prisma from "../db.server.js";
+import { ProductMetadataService } from "~/services/productMetadata.server";
 
 // Define allowed origin for CORS - fully permissive for all domains
 const allowedOrigins = [
@@ -199,81 +200,175 @@ export const action = async ({ request }) => {
 
 // New function to process events for analytics
 async function processEventForAnalytics(eventData, sessionId, shopDomain) {
-  const eventName = eventData.eventName;
-  const data = eventData.data || {};
+  const { eventName } = eventData;
   
-  try {
-    switch(eventName) {
-      case 'product_viewed':
-        if (data.productVariant) {
-          // Create ProductView record
-          await prisma.productView.create({
-            data: {
-              productId: data.productVariant.product?.id || "unknown",
-              variantId: data.productVariant.id || "unknown",
-              productTitle: data.productVariant.product?.title || data.productVariant.title || "Unknown Product",
-              price: parseFloat(data.productVariant.price?.amount || 0),
-              shopDomain: shopDomain,
-              sessionId: sessionId,
-              userId: eventData.customer?.id || null,
-              viewedAt: new Date(eventData.timestamp),
-              // Add other fields as available from the event
-            }
-          });
-          console.log(`Created ProductView record for product ${data.productVariant.product?.title || "unknown"}`);
-        }
-        break;
+  // Process product views
+  if (eventName === 'product_viewed') {
+    try {
+      const productId = eventData.product_id || eventData.productId;
+      const variantId = eventData.variant_id || eventData.variantId;
+      const productTitle = eventData.product_title || eventData.productTitle;
+      const price = parseFloat(eventData.product_price || eventData.price || 0);
+      const userId = eventData.user_id || eventData.userId;
+      
+      // Store product view
+      if (productId) {
+        await prisma.productView.create({
+          data: {
+            productId: productId.toString(),
+            variantId: variantId ? variantId.toString() : null,
+            productTitle: productTitle || 'Unknown Product',
+            price: isNaN(price) ? 0 : price,
+            shopDomain,
+            sessionId,
+            userId: userId || null,
+            referringProduct: eventData.referring_product || null,
+            referringCollection: eventData.referring_collection || null,
+            viewDuration: parseInt(eventData.view_duration || 0, 10),
+            deviceType: eventData.device_type || null,
+            viewedAt: new Date(),
+          },
+        });
         
-      case 'product_added_to_cart':
-        if (data.cartLine) {
-          // Create CartEvent record
-          await prisma.cartEvent.create({
-            data: {
-              shopDomain: shopDomain,
-              productId: data.cartLine.merchandise.product?.id || "unknown",
-              variantId: data.cartLine.merchandise.id || "unknown",
-              quantity: data.cartLine.quantity || 1,
-              price: parseFloat(data.cartLine.merchandise.price?.amount || 0),
-              sessionId: sessionId,
-              userId: eventData.customer?.id || null,
-              eventType: "ADD_TO_CART",
-              timestamp: new Date(eventData.timestamp),
-            }
-          });
-          console.log(`Created CartEvent record for product ${data.cartLine.merchandise.product?.title || "unknown"}`);
-        }
-        break;
-        
-      case 'checkout_completed':
-        if (data.checkout && data.checkout.order) {
-          // Create Order record
-          const order = await prisma.order.create({
-            data: {
-              shopDomain: shopDomain,
-              orderId: data.checkout.order.id,
-              orderNumber: data.checkout.order.orderNumber,
-              totalPrice: parseFloat(data.checkout.totalPrice?.amount || 0),
-              userId: eventData.customer?.id || null,
-              sessionId: sessionId,
-              completedAt: new Date(eventData.timestamp),
-              // Create order items
-              orderItems: {
-                create: (data.checkout.lineItems || []).map(item => ({
-                  productId: item.variant?.product?.id || "unknown",
-                  variantId: item.variant?.id || "unknown",
-                  quantity: item.quantity || 1,
-                  price: parseFloat(item.variant?.price?.amount || 0),
-                }))
-              }
-            }
-          });
-          console.log(`Created Order record ID: ${order.id} for order ${data.checkout.order.orderNumber || "unknown"}`);
-        }
-        break;
+        // Also update product metadata for recommendations
+        await ProductMetadataService.ensureProductMetadata({
+          id: productId.toString(),
+          title: productTitle,
+          type: eventData.product_category || eventData.productType,
+          vendor: eventData.product_brand || eventData.vendor,
+          price: isNaN(price) ? 0 : price,
+          tags: eventData.tags ? (Array.isArray(eventData.tags) ? eventData.tags : [eventData.tags]) : [],
+          collections: eventData.collections ? (Array.isArray(eventData.collections) ? eventData.collections : [eventData.collections]) : [],
+        }, shopDomain);
+      }
+    } catch (error) {
+      console.error('Error processing product view analytics:', error);
     }
-  } catch (error) {
-    console.error(`Error processing ${eventName} for analytics:`, error);
-    // Don't throw the error - we just log it and continue
+  } 
+  
+  // Process cart events
+  else if (eventName === 'product_added_to_cart' || eventName === 'product_removed_from_cart') {
+    try {
+      const productId = eventData.product_id || eventData.productId;
+      const variantId = eventData.variant_id || eventData.variantId;
+      const price = parseFloat(eventData.product_price || eventData.price || 0);
+      const quantity = parseInt(eventData.quantity || 1, 10);
+      const userId = eventData.user_id || eventData.userId;
+      
+      if (productId) {
+        await prisma.cartEvent.create({
+          data: {
+            shopDomain,
+            productId: productId.toString(),
+            variantId: variantId ? variantId.toString() : null,
+            quantity: isNaN(quantity) ? 1 : quantity,
+            price: isNaN(price) ? 0 : price,
+            sessionId,
+            userId: userId || null,
+            eventType: eventName === 'product_added_to_cart' ? 'ADD_TO_CART' : 'REMOVE_FROM_CART',
+            timestamp: new Date(),
+          },
+        });
+        
+        // Also update product metadata if we have product info
+        if (eventName === 'product_added_to_cart') {
+          await ProductMetadataService.ensureProductMetadata({
+            id: productId.toString(),
+            title: eventData.product_title || eventData.productTitle,
+            type: eventData.product_category || eventData.productType,
+            vendor: eventData.product_brand || eventData.vendor,
+            price: isNaN(price) ? 0 : price,
+            tags: eventData.tags ? (Array.isArray(eventData.tags) ? eventData.tags : [eventData.tags]) : [],
+            collections: eventData.collections ? (Array.isArray(eventData.collections) ? eventData.collections : [eventData.collections]) : [],
+          }, shopDomain);
+        }
+      }
+    } catch (error) {
+      console.error('Error processing cart event analytics:', error);
+    }
+  }
+  
+  // Process order completed events
+  else if (eventName === 'checkout_completed') {
+    try {
+      const orderId = eventData.order_id || null;
+      const orderTotal = parseFloat(eventData.order_total || 0);
+      const userId = eventData.user_id || eventData.userId;
+      
+      if (orderId) {
+        // Create the order
+        const order = await prisma.order.create({
+          data: {
+            shopDomain,
+            orderId: orderId.toString(),
+            orderNumber: eventData.order_number || null,
+            totalPrice: isNaN(orderTotal) ? 0 : orderTotal,
+            userId: userId || null,
+            sessionId,
+            completedAt: new Date(),
+          },
+        });
+        
+        // If we have line items, add them to the order
+        if (eventData.line_items && Array.isArray(eventData.line_items)) {
+          for (const item of eventData.line_items) {
+            await prisma.orderItem.create({
+              data: {
+                orderId: order.id,
+                productId: item.product_id.toString(),
+                variantId: item.variant_id ? item.variant_id.toString() : null,
+                quantity: parseInt(item.quantity || 1, 10),
+                price: parseFloat(item.price || 0),
+              },
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error processing order completed analytics:', error);
+    }
+  }
+  
+  // Process user-related events
+  else if (eventName === 'customer_account_created' || eventName === 'customer_logged_in') {
+    try {
+      const userId = eventData.user_id || eventData.userId || eventData.customer_id;
+      
+      if (userId && sessionId) {
+        // Update session with user ID
+        await prisma.pixelSession.updateMany({
+          where: { sessionId },
+          data: { userId },
+        });
+        
+        // Check if we need to create a user profile
+        const existingProfile = await prisma.userProfile.findUnique({
+          where: { userId },
+        });
+        
+        if (!existingProfile) {
+          await prisma.userProfile.create({
+            data: {
+              userId,
+              shopDomain,
+              preferredCategories: [],
+              preferredBrands: [],
+              viewedProducts: [],
+              purchasedProducts: [],
+              lastActive: new Date(),
+            },
+          });
+        } else {
+          // Update last active timestamp
+          await prisma.userProfile.update({
+            where: { userId },
+            data: { lastActive: new Date() },
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Error processing user event analytics:', error);
+    }
   }
 }
 
