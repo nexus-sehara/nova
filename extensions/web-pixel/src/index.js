@@ -1,6 +1,6 @@
 import {register} from "@shopify/web-pixels-extension";
 
-register(({ analytics, browser, config }) => {
+register(({ analytics, browser, config, init, customerPrivacy }) => {
   // Initialize with account ID from settings or use a default
   const accountID = config?.accountID || 'demo-account';
   console.log(`Web pixel initialized with account ID: ${accountID}`);
@@ -50,6 +50,14 @@ register(({ analytics, browser, config }) => {
     'customer_logged_in'
   ];
 
+  // --- PRIVACY HANDLING ---
+  // Get initial privacy status
+  let customerPrivacyStatus = init.customerPrivacy;
+  // Listen for consent changes
+  customerPrivacy.subscribe('visitorConsentCollected', (event) => {
+    customerPrivacyStatus = event.customerPrivacy;
+  });
+
   const trackEvent = async (eventType, trackingParams) => {
     for (const endpoint of BEACON_ENDPOINTS) {
       try {
@@ -69,6 +77,11 @@ register(({ analytics, browser, config }) => {
 
   eventTypes.forEach(eventType => {
     analytics.subscribe(eventType, (event) => {
+      // Only send analytics if allowed by privacy settings
+      if (!customerPrivacyStatus.analyticsProcessingAllowed) {
+        console.log('Analytics not allowed by customer privacy settings.');
+        return;
+      }
       console.log(`${eventType} event detected`, event);
       let shopDomain = 'unknown-shop.myshopify.com';
       const context = event.context || {};

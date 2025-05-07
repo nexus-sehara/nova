@@ -1,18 +1,25 @@
 name = "web-pixel"
 type = "web_pixel_extension"
 
-# Grants network access to the browser.fetch() Web API
 network_access = true
-
 runtime_context = "strict"
+
+description = "Tracks visitor behavior via Web Pixel and sends events to your analytics endpoint."
+
+[customer_privacy]
+analytics = true
+marketing = true
+preferences = false
+sale_of_data = "disabled"
 
 [settings]
 type = "object"
 
 [settings.fields.accountID]
 name = "Account ID"
-description = "Account ID"
+description = "Your internal tracking or analytics account ID"
 type = "single_line_text_field"
-validations =  [
-  { name = "min", value = "1" }
+validations = [
+  { name = "min", value = "1" },
+  { name = "max", value = "1000000" }
 ]
