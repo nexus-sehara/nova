@@ -5,6 +5,14 @@ import {
   Scripts,
   ScrollRestoration,
 } from "@remix-run/react";
+import { generateCSPHeaders } from "./utils/csp-headers";
+
+export const headers = ({ parentHeaders, loaderHeaders, actionHeaders }) => {
+  return {
+    ...generateCSPHeaders(),
+    "Cache-Control": "no-store",
+  };
+};
 
 export default function App() {
   return (

@@ -4,6 +4,8 @@ import { AppProvider } from "@shopify/shopify-app-remix/react";
 import { NavMenu } from "@shopify/app-bridge-react";
 import polarisStyles from "@shopify/polaris/build/esm/styles.css?url";
 import { authenticate } from "../shopify.server";
+import { Frame } from "@shopify/polaris";
+import { generateCSPHeaders } from "../utils/csp-headers";
 
 export const links = () => [{ rel: "stylesheet", href: polarisStyles }];
 
@@ -17,14 +19,20 @@ export default function App() {
   const { apiKey } = useLoaderData();
 
   return (
-    <AppProvider isEmbeddedApp apiKey={apiKey}>
-      <NavMenu>
-        <Link to="/app" rel="home">
-          Home
-        </Link>
-        <Link to="/app/additional">Additional page</Link>
-      </NavMenu>
-      <Outlet />
+    <AppProvider 
+      isEmbeddedApp 
+      apiKey={apiKey}
+      forceRedirect
+    >
+      <Frame>
+        <NavMenu>
+          <Link to="/app" rel="home">
+            Home
+          </Link>
+          <Link to="/app/additional">Additional page</Link>
+        </NavMenu>
+        <Outlet />
+      </Frame>
     </AppProvider>
   );
 }
@@ -35,5 +43,11 @@ export function ErrorBoundary() {
 }
 
 export const headers = (headersArgs) => {
-  return boundary.headers(headersArgs);
+  const boundaryHeaders = boundary.headers(headersArgs);
+  return {
+    ...boundaryHeaders,
+    ...generateCSPHeaders(),
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+  };
 };
