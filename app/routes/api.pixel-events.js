@@ -1,6 +1,6 @@
 // import { authenticate } from "../shopify.server"; // This import is not used for the action, can be removed if not used elsewhere in this file or for other exports
 import prisma from "../db.server.js";
-import { ProductMetadataService } from "~/services/productMetadata.server";
+import { ProductMetadataService } from "../services/productMetadata.server.js";
 
 // Define allowed origin for CORS - fully permissive for all domains
 const allowedOrigins = [

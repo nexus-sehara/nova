@@ -1,5 +1,5 @@
 import { authenticate } from "../../shopify.server";
-import { RecommendationEngine } from "~/services/recommendationEngine.server";
+import { RecommendationEngine } from "../../services/recommendationEngine.server.js";
 
 /**
  * Admin-only API endpoint that triggers the calculation of product recommendations

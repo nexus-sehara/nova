@@ -1,6 +1,6 @@
 import prisma from '../../db.server.js';
-import { RecommendationEngine } from '~/services/recommendationEngine.server';
-import { ProductMetadataService } from '~/services/productMetadata.server';
+import { RecommendationEngine } from '../../services/recommendationEngine.server.js';
+import { ProductMetadataService } from '../../services/productMetadata.server.js';
 
 /**
  * API endpoint to get product recommendations
