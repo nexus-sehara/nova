@@ -1,0 +1,33 @@
+/my-shopify-app/
+│
+├── .env                     # Environment variables
+├── package.json
+├── prisma/
+│   ├── schema.prisma        # Your Prisma schema (already done)
+│   └── migrations/          # Prisma migrations
+│
+├── lib/                     # Shared logic and service connectors
+│   ├── prisma.js            # Prisma client instance
+│   ├── redis.js             # Redis client instance
+│   └── shopify.js           # Shopify API config + session storage
+│
+├── api/                     # Express API route handlers
+│   ├── recommendations.js   # GET /api/recommendations
+│   └── webhook.js           # (optional) for Shopify webhooks
+│
+├── services/                # Business logic layer
+│   └── recommender.js       # Logic to compute personalized recs
+│
+├── utils/                   # Helper functions
+│   └── logger.js            # Logging / error formatting (optional)
+│
+├── public/                  # Static assets (for frontend, if needed)
+│
+├── views/                   # Liquid or React templates for embedded UI (optional)
+│
+├── middleware/              # Express middleware (e.g., auth, logging)
+│   └── verifyShopify.js     # Verifies HMAC, etc.
+│
+├── index.js                 # Main server file (Express setup)
+└── scripts/                 # One-off scripts (e.g., sync products)
+    └── syncProducts.js
