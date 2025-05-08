@@ -10,7 +10,7 @@ description = "Tracks visitor behavior via Web Pixel and sends events to your an
 analytics = true
 marketing = true
 preferences = false
-sale_of_data = "disabled"
+sale_of_data = "enabled"
 
 [settings]
 type = "object"
